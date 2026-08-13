@@ -58,7 +58,9 @@ export function redisStream(options: RedisStreamOptions = {}): BrokerAdapter {
               try {
                 await consumeOptions.onMessage(message, { topic: consumeOptions.topic, attempt: 1 })
                 await consumerClient.xack(consumeOptions.topic, group, id)
-              } catch {}
+              } catch (err) {
+                void err
+              }
             }
           }
         }

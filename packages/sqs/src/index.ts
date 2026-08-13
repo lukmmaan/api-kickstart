@@ -38,7 +38,9 @@ export function sqs(options: SqsOptions = {}): BrokerAdapter {
               if (msg.ReceiptHandle) {
                 await client.send(new DeleteMessageCommand({ QueueUrl: consumeOptions.topic, ReceiptHandle: msg.ReceiptHandle }))
               }
-            } catch {}
+            } catch (err) {
+              void err
+            }
           }
         }
       })()

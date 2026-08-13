@@ -3,6 +3,7 @@
 > Stop rewriting the same 800 lines on every new project. Auth, authorization, validation, CORS, error handling, database, and message broker — wired together with sane defaults, swappable everywhere.
 
 [![npm version](https://img.shields.io/npm/v/api-kickstart.svg)](https://www.npmjs.com/package/api-kickstart)
+[![CI](https://github.com/lukmmaan/api-kickstart/actions/workflows/ci.yml/badge.svg)](https://github.com/lukmmaan/api-kickstart/actions/workflows/ci.yml)
 [![bundle size](https://img.shields.io/bundlephobia/minzip/api-kickstart)](https://bundlephobia.com/package/api-kickstart)
 [![license](https://img.shields.io/npm/l/api-kickstart.svg)](./LICENSE)
 [![types](https://img.shields.io/npm/types/api-kickstart.svg)](https://www.typescriptlang.org/)
@@ -1163,8 +1164,11 @@ This repository is a workspace of independent packages:
 
 - `packages/core` — the `api-kickstart` package itself (routing, context, auth strategies, authorization, CORS, errors, env, testing, OpenAPI). Split into focused modules (`router.ts`, `group.ts`, `middleware.ts`, `authorize.ts`, `cors.ts`, `resource.ts`, `openapi.ts`, `auth/*`) rather than one file.
 - `packages/<name>` — one package per adapter, published as `@kickstart/<name>`. Each wraps its underlying library's real client and, where it has more than one concern, splits into `index.ts` (the factory), `types.ts` (options), and `errors.ts` (error-code normalization to `AppError` subclasses).
+- `examples/blog-api` — a runnable reference app (JWT auth, row-level scope, `resource()`, in-memory `DbAdapter`, zero external services) — see [its README](./examples/blog-api/README.md).
 
 Every adapter package is a working implementation, not a placeholder — see the [Roadmap](#roadmap) for what's still open (OIDC and the CLI).
+
+Tests run with `vitest` (`npm test`), linting with `eslint` (`npm run lint`), and CI runs both plus `build`/`typecheck` on every push and PR — see [CONTRIBUTING.md](./CONTRIBUTING.md) for the full workflow, including how to add a new adapter and how changesets/versioning work.
 
 ---
 
