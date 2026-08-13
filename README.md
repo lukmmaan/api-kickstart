@@ -58,6 +58,7 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
 - [Configuration](#configuration)
 - [OpenAPI generation](#openapi-generation)
 - [Testing](#testing)
+- [CLI](#cli)
 - [Production checklist](#production-checklist)
 - [FAQ](#faq)
 
@@ -251,7 +252,7 @@ Intended for internal tools and health endpoints. Refuses to run over plain HTTP
 ```ts
 import { oidc } from 'api-kickstart/auth'
 
-oidc({
+const google = oidc({
   issuer: 'https://accounts.google.com',
   clientId: env.GOOGLE_CLIENT_ID,
   clientSecret: env.GOOGLE_CLIENT_SECRET,
@@ -259,9 +260,40 @@ oidc({
   scopes: ['openid', 'email', 'profile'],
   onUser: async (profile) => db.user.upsert({ /* ... */ }),
 })
+
+createApp({ auth: google, /* ... */ })
 ```
 
-Discovery, PKCE, state, and nonce are handled. JWKS keys are cached and rotated automatically.
+Discovery (`/.well-known/openid-configuration`), PKCE (S256), state, and nonce are handled for you. JWKS keys are fetched and cached lazily via `jose`'s remote key set, so rotation on the identity provider's side is picked up automatically without a restart.
+
+Wire the redirect flow with the two methods the strategy exposes beyond `authenticate()`:
+
+```ts
+app.route({
+  method: 'GET',
+  path: '/auth/google',
+  auth: false,
+  handler: async (ctx) => {
+    const { url, state, codeVerifier } = await google.authorizationUrl()
+    // stash state + codeVerifier in a session/cookie, then redirect the browser to `url`
+    return { redirect: url }
+  },
+})
+
+app.route({
+  method: 'GET',
+  path: '/auth/google/callback',
+  auth: false,
+  handler: async (ctx) => {
+    const { code } = ctx.query
+    // codeVerifier comes back from wherever you stashed it above
+    const { user, tokens } = await google.handleCallback({ code, codeVerifier })
+    return { user, tokens }
+  },
+})
+```
+
+Once a route uses `auth: true` with the OIDC strategy configured, `authenticate()` validates the bearer token's signature against the same JWKS — useful when the identity provider issues JWT access tokens you want to accept directly on your API.
 
 ### Multiple strategies
 
@@ -404,13 +436,11 @@ If a role isn't defined for a resource, access is denied. There is no implicit "
 
 ### Audit mode
 
-Turn this on in staging to find queries that bypassed scope entirely:
-
 ```ts
 createApp({ scopeAudit: 'warn' })   // 'off' | 'warn' | 'throw'
 ```
 
-Every query that runs on a scoped resource without a scope filter is logged with a stack trace pointing at the offending line. Run it as `throw` in CI and you'll never ship the forty-first controller.
+`app.diagnostics().scopeAudit` exposes the configured value, and `npx api-kickstart doctor` fails the `scope-audit-enabled` check when it's left at `'off'` — a nudge to turn it on before shipping. Runtime interception that actually logs (or throws on) a query that bypassed scope, with a stack trace pointing at the offending line, is not implemented yet; see the [Roadmap](#roadmap).
 
 ### Hierarchies
 
@@ -587,18 +617,20 @@ cors: {
 Your own, at any level:
 
 ```ts
-createApp({ middleware: [requestLogger(), helmet()] })     // global
+import { logger, helmet } from 'api-kickstart/middleware'
+
+createApp({ middleware: [logger(), helmet()] })            // global
 app.group({ middleware: [auditTrail()] }, /* ... */)       // group
 app.route({ middleware: [captureRawBody()], /* ... */ })   // single route
 ```
 
-Signature is framework-independent:
+Signature is framework-independent. Handlers write their result to `ctx.response.body`; middleware can read and rewrite it, and can set response headers and status directly, because they run in an onion — code after `await next()` executes once everything inside has finished:
 
 ```ts
 const timing = async (ctx, next) => {
   const start = Date.now()
   await next()
-  ctx.res.header('x-response-time', `${Date.now() - start}ms`)
+  ctx.response.headers['x-response-time'] = `${Date.now() - start}ms`
 }
 ```
 
@@ -609,7 +641,38 @@ import { adapt } from '@kickstart/express'
 middleware: [adapt(someExpressMiddleware)]
 ```
 
-Built-ins you can turn on: `requestId`, `logger`, `rateLimit`, `compression`, `helmet`, `bodyLimit`, `timeout`, `idempotency`, `gracefulShutdown`.
+### Built-ins
+
+Imported from `api-kickstart/middleware`, all real implementations — none of these are stubs:
+
+```ts
+import { requestId, logger, rateLimit, compression, helmet, bodyLimit, timeout, idempotency } from 'api-kickstart/middleware'
+
+createApp({
+  middleware: [
+    requestId(),                                  // stamps ctx.requestId onto a response header
+    logger(),                                      // structured request/response logging
+    helmet(),                                       // security headers (nosniff, frameguard, HSTS, ...)
+    compression({ threshold: 1024 }),               // gzip responses over the threshold, via node:zlib
+    bodyLimit({ maxBytes: 1_000_000 }),             // 413 PayloadTooLarge over the limit
+  ],
+})
+```
+
+`rateLimit`, `timeout`, and `idempotency` are also available as per-route shorthands — set them on `app.route({...})` and the matching middleware is wired in automatically:
+
+```ts
+app.route({
+  method: 'POST',
+  path: '/orders',
+  rateLimit: { window: '1m', max: 10 },   // 429 TooManyRequests past the limit
+  timeout: '10s',                          // 408 RequestTimeout past the duration
+  idempotent: true,                        // dedupes by the Idempotency-Key header
+  handler: async (ctx) => { /* ... */ },
+})
+```
+
+`rateLimit` and `idempotency` both accept a `store` option (`RateLimitStore` / `IdempotencyStore`) — the in-memory default is fine for a single instance; pass a Redis-backed store for multi-instance deployments.
 
 ---
 
@@ -798,18 +861,40 @@ Consumers get the same context, validation, error normalization, and logging as 
 The hard part of publishing events: the database commits, then the broker call fails, and the event is gone forever.
 
 ```ts
-broker: rabbitmq({ url: env.AMQP_URL, outbox: true })
+import { pgOutboxStore } from '@kickstart/pg'
+import { rabbitmq } from '@kickstart/rabbitmq'
+
+const outbox = pgOutboxStore(pgPool)
+
+broker: rabbitmq({ url: env.AMQP_URL, outbox })
 ```
 
-With `outbox: true`, `publish()` inside a transaction writes to an outbox table in that same transaction. A background relay delivers it afterward, with at-least-once semantics.
+With an `outbox` store configured, `publish(topic, message, { tx })` writes a row to the outbox table instead of talking to the broker directly — pass the transaction's `tx` object so the insert commits atomically with the rest of your write:
 
-That means consumers **must be idempotent**. Each message carries a stable `messageId` for deduplication.
+```ts
+handler: async (ctx) => {
+  return ctx.db.transaction(async (tx) => {
+    const order = await tx.order.create({ data: ctx.body })
+    await ctx.broker.publish('order.created', order, { tx })
+    return order
+  })
+}
+```
+
+A background relay (started automatically once `outbox` is set, stopped by `broker.close()`) polls for unpublished rows and delivers them for real, with at-least-once semantics — that means consumers **must be idempotent**.
+
+`@kickstart/pg` ships the reference `pgOutboxStore`; `rabbitmq()` and `kafka()` both accept the `outbox` option. Implementing `OutboxStore` (`save`, `listPending`, `markPublished`) against another database plugs the same mechanism into it.
 
 ### Graceful shutdown
 
-On `SIGTERM`, in order: stop accepting HTTP requests → let in-flight requests finish → stop pulling new messages → let in-flight messages finish → close the broker → close the database → exit. Each stage has its own timeout.
+```ts
+import { gracefulShutdown } from 'api-kickstart'
 
-Getting this order wrong is how jobs get cut in half mid-execution.
+app.listen(port)
+gracefulShutdown(app, { drainTimeoutMs: 10_000, closeTimeoutMs: 10_000 })
+```
+
+On `SIGTERM` (and `SIGINT`), in order: stop accepting new HTTP requests (in-flight ones still get a response) → wait for in-flight requests to finish, up to `drainTimeoutMs` → close the framework, broker, and database, up to `closeTimeoutMs` → exit. Getting this order wrong is how requests get cut off mid-response.
 
 ---
 
@@ -854,8 +939,16 @@ export const config = env({
 
 Missing or malformed variables fail at startup with a readable list of what's wrong — not at 2am when the first request touches that code path.
 
+The `env:example` CLI command reads that same schema from a config file and generates a `.env.example` from it:
+
+```ts
+// api-kickstart.config.mjs
+export { config as envSchema } from './src/env.js'
+```
+
 ```bash
-npx api-kickstart env:example    # generate .env.example from your schema
+npx api-kickstart env:example              # reads ./api-kickstart.config.mjs by default
+npx api-kickstart env:example --config ./config/app.mjs --out .env.sample
 ```
 
 ---
@@ -868,12 +961,12 @@ Because routes are data, the spec is free:
 app.openapi({
   info: { title: 'My API', version: '1.0.0' },
   servers: [{ url: 'https://api.example.com' }],
-  serve: '/docs',        // Scalar UI
+  serve: '/docs',        // serves the same spec JSON at this path too
   json: '/openapi.json',
 })
 ```
 
-Paths, parameters, request and response schemas, auth requirements, and error shapes are all derived from what you already declared. No decorators, no JSDoc comments, no second source of truth that drifts.
+Paths, parameters, path-parameter names, auth requirements (`security`), tags, and summaries are derived from what you already declared on each route — no decorators, no JSDoc comments, no second source of truth that drifts. Request/response *schema* introspection is validator-specific and not generated yet (see the [Roadmap](#roadmap)); point a UI like [Scalar](https://scalar.com) or Swagger UI at the `json` endpoint for interactive docs.
 
 ---
 
@@ -903,24 +996,51 @@ expect(app.broker.published).toContainEqual(
 
 ---
 
-## Production checklist
+## CLI
 
-The CLI checks these for you:
+Both commands read a config file — `api-kickstart.config.mjs` in the current directory by default, or `--config <path>`:
 
-```bash
-npx api-kickstart doctor
+```ts
+// api-kickstart.config.mjs
+import { createApp } from 'api-kickstart'
+import { config as envSchema } from './src/env.js'
+
+export const app = createApp({ /* ... */ })
+export { envSchema }
 ```
 
-- [ ] `cors: 'dev'` is not used in production
-- [ ] `JWT_SECRET` is at least 32 bytes and not the example value
+`app` can also be a function (sync or async) returning an `App`, if constructing it has side effects you'd rather defer.
+
+```bash
+npx api-kickstart doctor                            # run the production checklist, exit 1 on any failure
+npx api-kickstart env:example                        # write .env.example from envSchema
+npx api-kickstart env:example --out .env.sample       # custom output path
+npx api-kickstart <command> --config ./path/to/config.mjs
+```
+
+---
+
+## Production checklist
+
+`npx api-kickstart doctor` checks these against a running `App` (point it at a config file — see [CLI](#cli)):
+
+- [ ] `JWT_SECRET` is at least 32 bytes and not a placeholder value
 - [ ] Every route has either `auth: true` or an explicit `auth: false`
-- [ ] Every scoped resource defines all roles, or explicitly denies them
-- [ ] `scopeAudit` reports zero unscoped queries
-- [ ] Rate limiting is enabled on auth endpoints
-- [ ] Refresh token rotation is on
-- [ ] Response validation passes across the test suite
-- [ ] Graceful shutdown is wired to `SIGTERM`
-- [ ] Broker consumers are idempotent when the outbox is enabled
+- [ ] Every scoped resource defines at least one role
+- [ ] `scopeAudit` is not left at `'off'`
+- [ ] Login routes have `rateLimit` configured
+- [ ] A `SIGTERM` handler is registered (call `gracefulShutdown(app)`)
+
+Enforced structurally, so `doctor` doesn't need to check them — `createApp()` throws at startup instead:
+
+- [ ] `cors: 'dev'` is refused when `NODE_ENV=production`
+- [ ] `cors: { origin: '*', credentials: true }` is refused outright
+- [ ] Refresh tokens rotate on every use, and reuse revokes the whole token family — there's no toggle to turn this off
+
+Not yet automated — verify these yourself:
+
+- [ ] Response validation passes across your test suite (`response` schemas run automatically outside `NODE_ENV=production`)
+- [ ] Broker consumers are idempotent when an outbox is enabled
 
 ---
 
@@ -960,16 +1080,20 @@ Every adapter package is a working implementation, not a placeholder — see the
 ## Roadmap
 
 - [x] Core: routing, context, roles/permissions/scope, CORS, errors, env, resource(), OpenAPI generation
-- [x] Auth strategies: JWT (with refresh rotation), session, API key, basic
+- [x] Auth strategies: JWT (HS/RS/ES, with refresh rotation), session, API key, basic, OIDC (discovery, PKCE, JWKS)
 - [x] Framework adapters: Express, Fastify, native `http`, Hono, Koa, NestJS
 - [x] Database adapters: `pg`, Prisma, Drizzle, Mongoose, Knex, TypeORM, Sequelize, MongoDB
 - [x] Broker adapters: in-memory, RabbitMQ, Kafka, Redis Streams, BullMQ, SQS, NATS, MQTT, Pub/Sub
 - [x] Validator adapters: Zod, Joi, Yup, Valibot, TypeBox
-- [ ] OIDC strategy (discovery, PKCE, JWKS rotation)
-- [ ] Transactional outbox for brokers
-- [ ] `npx api-kickstart doctor` / `env:example` CLI
+- [x] Built-in middleware: `requestId`, `logger`, `rateLimit`, `bodyLimit`, `timeout`, `idempotency`, `helmet`, `compression`, plus `rateLimit`/`timeout`/`idempotent` as route-level shorthands
+- [x] `gracefulShutdown(app)` — drain in-flight requests, then close framework/broker/db on `SIGTERM`
+- [x] `npx api-kickstart doctor` / `env:example` CLI
+- [x] Transactional outbox — `OutboxStore` + `startOutboxRelay`, `pgOutboxStore` reference implementation, wired into `rabbitmq()`/`kafka()`
+- [ ] Runtime `scopeAudit` interception (logging/throwing on a query that bypassed scope) — currently just a config flag `doctor` checks isn't `'off'`
+- [ ] OpenAPI request/response schema introspection (currently paths, params, auth, tags only)
+- [ ] Outbox stores for adapters beyond `pg`
 
-Every adapter listed above as done is a real implementation wired to its actual library, not a placeholder. Contributions welcome — the OIDC strategy and the CLI are the two pieces still open.
+Every adapter and built-in listed above as done is a real implementation, not a placeholder. Contributions welcome, especially on the three items still open.
 
 ---
 

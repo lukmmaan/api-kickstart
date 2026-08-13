@@ -6,6 +6,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "api-kickstart": "./bin/api-kickstart.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -30,10 +33,15 @@
     "./testing": {
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js"
+    },
+    "./middleware": {
+      "types": "./dist/builtins/index.d.ts",
+      "import": "./dist/builtins/index.js"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

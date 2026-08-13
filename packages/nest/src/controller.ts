@@ -28,7 +28,11 @@ export class KickstartController {
     for (const [key, value] of Object.entries(result.headers ?? {})) {
       res.setHeader(key, value)
     }
-    res.status(result.status).json(result.body)
+    if (Buffer.isBuffer(result.body)) {
+      res.status(result.status).end(result.body)
+    } else {
+      res.status(result.status).json(result.body)
+    }
   }
 }
 

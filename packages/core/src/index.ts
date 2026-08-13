@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { idempotency, rateLimit, timeout } from './builtins/index.js'
 import { buildCorsHeaders, type CorsOptions } from './cors.js'
 import { checkPermissions, checkRoles, resolveScope, type PermissionMap, type RoleHierarchy, type ScopeMap } from './authorize.js'
 import { resolveAppConfig, type CreateAppOptions } from './config.js'
@@ -25,13 +26,29 @@ import type {
 } from './types.js'
 
 export * from './types.js'
-export { AppError, BadRequest, Conflict, Forbidden, InternalError, NotFound, SchemaValidationError, Unauthorized, ValidationError } from './errors.js'
+export {
+  AppError,
+  BadRequest,
+  Conflict,
+  Forbidden,
+  InternalError,
+  NotFound,
+  PayloadTooLarge,
+  RequestTimeout,
+  SchemaValidationError,
+  TooManyRequests,
+  Unauthorized,
+  ValidationError,
+} from './errors.js'
 export type { CorsConfig, CorsOptions } from './cors.js'
 export type { PermissionMap, RoleHierarchy, ScopeMap, ScopeResolver } from './authorize.js'
 export type { CreateAppOptions, ResolvedAppConfig } from './config.js'
 export type { ResourceOptions, ResourceHooks, ResourceAction } from './resource.js'
 export type { OpenApiOptions, OpenApiInfo } from './openapi.js'
 export { GroupBuilder, type GroupOptions } from './group.js'
+export { gracefulShutdown, type GracefulShutdownOptions } from './lifecycle.js'
+export { runDoctorChecks, type DoctorCheck } from './doctor.js'
+export { startOutboxRelay, type OutboxEntry, type OutboxRelayOptions, type OutboxStore } from './outbox.js'
 
 export interface AuthRoutesConfig {
   login?: string
@@ -55,6 +72,12 @@ export interface InjectResult {
   headers: Record<string, string>
 }
 
+export interface AppDiagnostics {
+  routes: RouteConfig[]
+  scopeMap: ScopeMap
+  scopeAudit: 'off' | 'warn' | 'throw'
+}
+
 export class App {
   private compiledRoutes: CompiledRoute[] = []
   private strategies: AuthStrategy[]
@@ -64,6 +87,8 @@ export class App {
   private permissionMap: PermissionMap
   private scopeMap: ScopeMap
   private testUserOverride: AuthenticatedUser | null = null
+  private draining = false
+  private inFlightRequests = 0
 
   constructor(private options: CreateAppOptions) {
     const resolved = resolveAppConfig(options)
@@ -85,8 +110,17 @@ export class App {
   }
 
   route(config: RouteConfig): this {
-    const { regex, keys } = compilePath(config.path)
-    this.compiledRoutes.push({ config, regex, keys })
+    const autoMiddleware = []
+    if (config.rateLimit) autoMiddleware.push(rateLimit(config.rateLimit))
+    if (config.timeout) autoMiddleware.push(timeout({ duration: config.timeout }))
+    if (config.idempotent) autoMiddleware.push(idempotency())
+
+    const effectiveConfig = autoMiddleware.length > 0
+      ? { ...config, middleware: [...autoMiddleware, ...(config.middleware ?? [])] }
+      : config
+
+    const { regex, keys } = compilePath(effectiveConfig.path)
+    this.compiledRoutes.push({ config: effectiveConfig, regex, keys })
     return this
   }
 
@@ -102,6 +136,14 @@ export class App {
 
   routes(): RouteConfig[] {
     return this.compiledRoutes.map((r) => r.config)
+  }
+
+  diagnostics(): AppDiagnostics {
+    return {
+      routes: this.routes(),
+      scopeMap: this.scopeMap,
+      scopeAudit: this.options.scopeAudit ?? 'off',
+    }
   }
 
   useAuthRoutes(config: AuthRoutesConfig): this {
@@ -180,6 +222,8 @@ export class App {
           : rawMessage
         const logger = this.logger.child({ requestId, topic: meta.topic })
         const ctx: Context & { message: unknown; attempt: number } = {
+          method: 'MESSAGE',
+          path: `/${options.topic}`,
           user: null,
           body: undefined,
           query: undefined,
@@ -191,6 +235,7 @@ export class App {
           logger,
           requestId,
           raw: { req: rawMessage, res: null },
+          response: { status: 200, headers: {}, body: undefined },
           message,
           attempt: meta.attempt,
         }
@@ -222,6 +267,18 @@ export class App {
     await this.options.framework.close?.()
     await this.options.broker?.close?.()
     await this.options.db?.close?.()
+  }
+
+  drain(): void {
+    this.draining = true
+  }
+
+  async waitForInFlight(timeoutMs: number): Promise<void> {
+    const start = Date.now()
+    while (this.inFlightRequests > 0) {
+      if (Date.now() - start >= timeoutMs) return
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
   }
 
   async inject(request: InjectRequest): Promise<InjectResult> {
@@ -304,6 +361,15 @@ export class App {
     const originHeader = req.headers.origin
     const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader
 
+    if (this.draining) {
+      return {
+        status: 503,
+        body: { error: { code: 'SERVICE_UNAVAILABLE', message: 'Server is shutting down', requestId } },
+        headers: { 'x-request-id': requestId, connection: 'close' },
+      }
+    }
+
+    this.inFlightRequests += 1
     try {
       if (req.method === 'OPTIONS' && this.corsOptions) {
         return { status: 204, body: null, headers: buildCorsHeaders(this.corsOptions, origin) }
@@ -341,6 +407,8 @@ export class App {
       const logger = this.logger.child({ requestId })
 
       const ctx: Context = {
+        method: req.method,
+        path: req.path,
         user,
         body: validatedBody,
         query: validatedQuery,
@@ -352,6 +420,7 @@ export class App {
         logger,
         requestId,
         raw,
+        response: { status: 200, headers: {}, body: undefined },
       }
 
       if (config.load) {
@@ -369,22 +438,27 @@ export class App {
       }
 
       const middlewareChain = [...(this.options.middleware ?? []), ...(config.middleware ?? [])]
-      const runHandler = () => runWithContext({ user, requestId }, () => config.handler(ctx))
-      const result = await runMiddlewareChain(middlewareChain, ctx, runHandler)
+      const runHandler = async () => {
+        ctx.response.body = await runWithContext({ user, requestId }, () => config.handler(ctx))
+      }
+      await runMiddlewareChain(middlewareChain, ctx, runHandler)
 
       if (config.response && process.env.NODE_ENV !== 'production') {
-        this.validate(config.response, result, 'response')
+        this.validate(config.response, ctx.response.body, 'response')
       }
 
       const headers = this.corsOptions ? buildCorsHeaders(this.corsOptions, origin) : {}
+      Object.assign(headers, ctx.response.headers)
       headers['x-request-id'] = requestId
-      return { status: 200, body: result, headers }
+      return { status: ctx.response.status, body: ctx.response.body, headers }
     } catch (err) {
       const formatted = formatError(err, requestId, includeStack)
       const headers = this.corsOptions ? buildCorsHeaders(this.corsOptions, origin) : {}
       headers['x-request-id'] = requestId
       this.logger.error({ requestId, err })
       return { status: formatted.status, body: formatted.body, headers }
+    } finally {
+      this.inFlightRequests -= 1
     }
   }
 }

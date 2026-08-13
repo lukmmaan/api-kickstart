@@ -38,7 +38,15 @@ export interface Logger {
   child(bindings: Record<string, unknown>): Logger
 }
 
+export interface ResponseBag {
+  status: number
+  headers: Record<string, string>
+  body: unknown
+}
+
 export interface Context<TUser = AuthenticatedUser> {
+  method: string
+  path: string
   user: TUser | null
   body: unknown
   query: unknown
@@ -50,6 +58,7 @@ export interface Context<TUser = AuthenticatedUser> {
   logger: Logger
   requestId: string
   raw: RawRequest
+  response: ResponseBag
 }
 
 export interface AuthenticateArgs {

@@ -43,8 +43,12 @@ export function http(options: HttpAdapterOptions = {}): FrameworkAdapter {
       res.setHeader(key, value)
     }
     res.statusCode = result.status
-    res.setHeader('content-type', 'application/json')
-    res.end(result.body === undefined ? '' : JSON.stringify(result.body))
+    if (Buffer.isBuffer(result.body)) {
+      res.end(result.body)
+    } else {
+      res.setHeader('content-type', 'application/json')
+      res.end(result.body === undefined ? '' : JSON.stringify(result.body))
+    }
   }
 
   const server = options.server ?? createServer()

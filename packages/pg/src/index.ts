@@ -1,9 +1,11 @@
 import { Pool, type PoolClient, type PoolConfig } from 'pg'
 import type { DbAdapter } from 'api-kickstart'
 import { normalizePgError } from './errors.js'
+import { pgOutboxStore, type PgOutboxStoreOptions } from './outbox.js'
 import { translateScope, type PgScopeQuery } from './scope.js'
 
 export type { PgScopeQuery }
+export { pgOutboxStore, type PgOutboxStoreOptions }
 
 export function pg(configOrPool: PoolConfig | Pool): DbAdapter {
   const pool = configOrPool instanceof Pool ? configOrPool : new Pool(configOrPool)

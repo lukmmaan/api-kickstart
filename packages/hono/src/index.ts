@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono'
+import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { serve, type ServerType } from '@hono/node-server'
 import type { DispatchHandler, FrameworkAdapter, RequestLike } from 'api-kickstart'
 import { parseCookies } from './cookies.js'
@@ -51,7 +52,11 @@ export function hono(options: HonoAdapterOptions = {}): FrameworkAdapter {
     for (const [key, value] of Object.entries(result.headers ?? {})) {
       c.header(key, value)
     }
-    return c.json(result.body as object, result.status as Parameters<typeof c.json>[1])
+    const status = result.status as ContentfulStatusCode
+    if (Buffer.isBuffer(result.body)) {
+      return c.body(new Uint8Array(result.body), status)
+    }
+    return c.json(result.body as object, status)
   })
 
   return {

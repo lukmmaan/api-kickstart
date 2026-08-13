@@ -1,5 +1,5 @@
 import amqp, { type ConsumeMessage } from 'amqplib'
-import type { BrokerAdapter, BrokerConsumeOptions } from 'api-kickstart'
+import { startOutboxRelay, type BrokerAdapter, type BrokerConsumeOptions } from 'api-kickstart'
 import { ATTEMPT_HEADER, DEFAULT_EXCHANGE_TYPE, DEFAULT_PREFETCH } from './constants.js'
 import type { RabbitmqOptions } from './types.js'
 
@@ -31,15 +31,25 @@ export function rabbitmq(options: RabbitmqOptions): BrokerAdapter {
     return channelPromise
   }
 
+  async function publishNow(topic: string, message: unknown): Promise<void> {
+    const channel = await getChannel()
+    const payload = Buffer.from(JSON.stringify(message))
+    if (exchange) {
+      channel.publish(exchange, topic, payload, { persistent: true })
+    } else {
+      channel.sendToQueue(topic, payload, { persistent: true })
+    }
+  }
+
+  const stopRelay = options.outbox ? startOutboxRelay(options.outbox, publishNow) : null
+
   return {
-    async publish(topic, message) {
-      const channel = await getChannel()
-      const payload = Buffer.from(JSON.stringify(message))
-      if (exchange) {
-        channel.publish(exchange, topic, payload, { persistent: true })
-      } else {
-        channel.sendToQueue(topic, payload, { persistent: true })
+    async publish(topic, message, opts) {
+      if (options.outbox) {
+        await options.outbox.save({ topic, message }, opts?.tx)
+        return
       }
+      await publishNow(topic, message)
     },
 
     consume(consumeOptions: BrokerConsumeOptions) {
@@ -67,6 +77,7 @@ export function rabbitmq(options: RabbitmqOptions): BrokerAdapter {
     },
 
     async close() {
+      stopRelay?.()
       const channel = channelPromise ? await channelPromise : null
       await channel?.close()
       const connection = connectionPromise ? await connectionPromise : null

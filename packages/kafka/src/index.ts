@@ -1,5 +1,5 @@
 import { Kafka, type Consumer, type Producer } from 'kafkajs'
-import type { BrokerAdapter, BrokerConsumeOptions } from 'api-kickstart'
+import { startOutboxRelay, type BrokerAdapter, type BrokerConsumeOptions } from 'api-kickstart'
 import { DEFAULT_CLIENT_ID, DEFAULT_CONCURRENCY, DEFAULT_GROUP_ID } from './constants.js'
 import type { KafkaOptions } from './types.js'
 
@@ -18,10 +18,20 @@ export function kafka(options: KafkaOptions): BrokerAdapter {
     return producer
   }
 
+  async function publishNow(topic: string, message: unknown): Promise<void> {
+    const activeProducer = await getProducer()
+    await activeProducer.send({ topic, messages: [{ value: JSON.stringify(message) }] })
+  }
+
+  const stopRelay = options.outbox ? startOutboxRelay(options.outbox, publishNow) : null
+
   return {
-    async publish(topic, message) {
-      const activeProducer = await getProducer()
-      await activeProducer.send({ topic, messages: [{ value: JSON.stringify(message) }] })
+    async publish(topic, message, opts) {
+      if (options.outbox) {
+        await options.outbox.save({ topic, message }, opts?.tx)
+        return
+      }
+      await publishNow(topic, message)
     },
 
     consume(consumeOptions: BrokerConsumeOptions) {
@@ -41,6 +51,7 @@ export function kafka(options: KafkaOptions): BrokerAdapter {
     },
 
     async close() {
+      stopRelay?.()
       await producer?.disconnect()
       await Promise.all(consumers.map((c) => c.disconnect()))
     },

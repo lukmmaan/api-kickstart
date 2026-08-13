@@ -56,6 +56,27 @@ export class ValidationError extends AppError {
   }
 }
 
+export class RequestTimeout extends AppError {
+  constructor(message = 'Request timed out', details?: unknown) {
+    super('REQUEST_TIMEOUT', 408, message, details)
+    this.name = 'RequestTimeout'
+  }
+}
+
+export class PayloadTooLarge extends AppError {
+  constructor(message = 'Payload too large', details?: unknown) {
+    super('PAYLOAD_TOO_LARGE', 413, message, details)
+    this.name = 'PayloadTooLarge'
+  }
+}
+
+export class TooManyRequests extends AppError {
+  constructor(message = 'Too many requests', details?: unknown) {
+    super('TOO_MANY_REQUESTS', 429, message, details)
+    this.name = 'TooManyRequests'
+  }
+}
+
 export class InternalError extends AppError {
   constructor(message = 'Internal server error') {
     super('INTERNAL_ERROR', 500, message)
