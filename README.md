@@ -950,28 +950,26 @@ Out of scope. Use your ORM's migration tool.
 
 This repository is a workspace of independent packages:
 
-- `packages/core` — the `api-kickstart` package itself (routing, context, auth strategies, authorization, CORS, errors, env, testing, OpenAPI).
-- `packages/<name>` — one package per adapter, published as `@kickstart/<name>`.
+- `packages/core` — the `api-kickstart` package itself (routing, context, auth strategies, authorization, CORS, errors, env, testing, OpenAPI). Split into focused modules (`router.ts`, `group.ts`, `middleware.ts`, `authorize.ts`, `cors.ts`, `resource.ts`, `openapi.ts`, `auth/*`) rather than one file.
+- `packages/<name>` — one package per adapter, published as `@kickstart/<name>`. Each wraps its underlying library's real client and, where it has more than one concern, splits into `index.ts` (the factory), `types.ts` (options), and `errors.ts` (error-code normalization to `AppError` subclasses).
 
-Adapters marked done in the roadmap below are functional. The rest are structurally complete (typed, conformant to the shared interfaces) but throw a clear error if actually invoked, until implemented.
+Every adapter package is a working implementation, not a placeholder — see the [Roadmap](#roadmap) for what's still open (OIDC and the CLI).
 
 ---
 
 ## Roadmap
 
-- [x] Core, Express adapter, JWT, Zod, scope
-- [x] Fastify and native `http` adapters
-- [x] `pg` and `prisma` adapters
-- [x] In-memory broker for tests
-- [ ] Hono, Koa, NestJS adapters
-- [ ] Session and API key strategies (in progress)
-- [ ] Drizzle, Mongoose, Knex, TypeORM, Sequelize, MongoDB adapters
-- [ ] RabbitMQ, Kafka, Redis Streams, BullMQ, SQS, NATS, MQTT, Pub/Sub adapters
-- [ ] Joi, Yup, Valibot, TypeBox adapters
-- [ ] OpenAPI generation
-- [ ] OIDC strategy
+- [x] Core: routing, context, roles/permissions/scope, CORS, errors, env, resource(), OpenAPI generation
+- [x] Auth strategies: JWT (with refresh rotation), session, API key, basic
+- [x] Framework adapters: Express, Fastify, native `http`, Hono, Koa, NestJS
+- [x] Database adapters: `pg`, Prisma, Drizzle, Mongoose, Knex, TypeORM, Sequelize, MongoDB
+- [x] Broker adapters: in-memory, RabbitMQ, Kafka, Redis Streams, BullMQ, SQS, NATS, MQTT, Pub/Sub
+- [x] Validator adapters: Zod, Joi, Yup, Valibot, TypeBox
+- [ ] OIDC strategy (discovery, PKCE, JWKS rotation)
+- [ ] Transactional outbox for brokers
+- [ ] `npx api-kickstart doctor` / `env:example` CLI
 
-Contributions welcome — adapters especially. Each one is small and has a conformance suite to check against.
+Every adapter listed above as done is a real implementation wired to its actual library, not a placeholder. Contributions welcome — the OIDC strategy and the CLI are the two pieces still open.
 
 ---
 
