@@ -25,6 +25,7 @@ export interface ResolvedAppConfig {
   roleHierarchy: RoleHierarchy
   permissionMap: PermissionMap
   scopeMap: ScopeMap
+  scopeAudit: 'off' | 'warn' | 'throw'
 }
 
 export function resolveAppConfig(options: CreateAppOptions): ResolvedAppConfig {
@@ -35,5 +36,6 @@ export function resolveAppConfig(options: CreateAppOptions): ResolvedAppConfig {
     roleHierarchy: options.roleHierarchy ?? {},
     permissionMap: options.permissions ?? {},
     scopeMap: options.scope ?? {},
+    scopeAudit: options.scopeAudit ?? 'off',
   }
 }

@@ -3,6 +3,7 @@ import bodyParser from 'koa-bodyparser'
 import type { Server } from 'node:http'
 import type { DispatchHandler, FrameworkAdapter, RequestLike } from 'api-kickstart'
 import { parseCookies } from './cookies.js'
+import { captureMultipartBody } from './multipart.js'
 
 export interface KoaAdapterOptions {
   app?: Koa
@@ -13,6 +14,7 @@ export function koa(options: KoaAdapterOptions = {}): FrameworkAdapter {
   let dispatchHandler: DispatchHandler | null = null
   let server: Server | null = null
 
+  app.use(captureMultipartBody)
   app.use(bodyParser())
 
   app.use(async (ctx: Context) => {

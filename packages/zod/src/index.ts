@@ -1,4 +1,5 @@
 import type { ZodSchema } from 'zod'
+import { zodToJsonSchema } from 'zod-to-json-schema'
 import { SchemaValidationError, type Validator } from 'api-kickstart'
 
 export function zod(): Validator {
@@ -15,6 +16,9 @@ export function zod(): Validator {
         throw new SchemaValidationError(issues)
       }
       return result.data
+    },
+    toJsonSchema(schema) {
+      return zodToJsonSchema(schema as ZodSchema, { target: 'openApi3' })
     },
   }
 }
