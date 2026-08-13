@@ -1,5 +1,6 @@
 import { Redis } from 'ioredis'
 import type { BrokerAdapter, BrokerConsumeOptions } from 'api-kickstart'
+import { BLOCK_TIMEOUT_MS, BUSY_GROUP_ERROR_SUBSTRING, DEFAULT_CONCURRENCY, DEFAULT_CONSUMER_GROUP, DEFAULT_REDIS_URL, PAYLOAD_FIELD } from './constants.js'
 import type { RedisStreamOptions } from './types.js'
 
 export type { RedisStreamOptions }
@@ -8,18 +9,18 @@ type StreamEntries = [id: string, fields: string[]][]
 type StreamReadResult = [stream: string, entries: StreamEntries][] | null
 
 export function redisStream(options: RedisStreamOptions = {}): BrokerAdapter {
-  const url = options.url ?? 'redis://localhost:6379'
+  const url = options.url ?? DEFAULT_REDIS_URL
   const publisher = new Redis(url)
   const consumerClient = new Redis(url)
   const activeConsumers: { stop: boolean }[] = []
 
   return {
     async publish(topic, message) {
-      await publisher.xadd(topic, '*', 'payload', JSON.stringify(message))
+      await publisher.xadd(topic, '*', PAYLOAD_FIELD, JSON.stringify(message))
     },
 
     consume(consumeOptions: BrokerConsumeOptions) {
-      const group = consumeOptions.group ?? options.consumerGroup ?? 'api-kickstart'
+      const group = consumeOptions.group ?? options.consumerGroup ?? DEFAULT_CONSUMER_GROUP
       const consumerName = `${group}-${process.pid}-${Math.random().toString(36).slice(2)}`
       const state = { stop: false }
       activeConsumers.push(state)
@@ -28,7 +29,7 @@ export function redisStream(options: RedisStreamOptions = {}): BrokerAdapter {
         try {
           await consumerClient.xgroup('CREATE', consumeOptions.topic, group, '0', 'MKSTREAM')
         } catch (err) {
-          if (!(err instanceof Error) || !err.message.includes('BUSYGROUP')) throw err
+          if (!(err instanceof Error) || !err.message.includes(BUSY_GROUP_ERROR_SUBSTRING)) throw err
         }
 
         while (!state.stop) {
@@ -37,9 +38,9 @@ export function redisStream(options: RedisStreamOptions = {}): BrokerAdapter {
             group,
             consumerName,
             'COUNT',
-            consumeOptions.concurrency ?? 1,
+            consumeOptions.concurrency ?? DEFAULT_CONCURRENCY,
             'BLOCK',
-            5000,
+            BLOCK_TIMEOUT_MS,
             'STREAMS',
             consumeOptions.topic,
             '>',
@@ -49,7 +50,7 @@ export function redisStream(options: RedisStreamOptions = {}): BrokerAdapter {
 
           for (const [, entries] of response) {
             for (const [id, fields] of entries) {
-              const payloadIndex = fields.indexOf('payload')
+              const payloadIndex = fields.indexOf(PAYLOAD_FIELD)
               const raw = payloadIndex >= 0 ? fields[payloadIndex + 1] : undefined
               const message = raw ? JSON.parse(raw) : null
               try {

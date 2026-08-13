@@ -68,15 +68,6 @@ export interface ValidationIssue {
   message: string
 }
 
-export class SchemaValidationError extends Error {
-  issues: ValidationIssue[]
-  constructor(issues: ValidationIssue[]) {
-    super('Schema validation failed')
-    this.name = 'SchemaValidationError'
-    this.issues = issues
-  }
-}
-
 export interface Validator {
   name: string
   parse(schema: unknown, value: unknown, path: string): unknown

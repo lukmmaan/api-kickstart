@@ -1,3 +1,5 @@
+import type { ValidationIssue } from './types.js'
+
 export class AppError extends Error {
   code: string
   status: number
@@ -58,6 +60,16 @@ export class InternalError extends AppError {
   constructor(message = 'Internal server error') {
     super('INTERNAL_ERROR', 500, message)
     this.name = 'InternalError'
+  }
+}
+
+export class SchemaValidationError extends Error {
+  issues: ValidationIssue[]
+
+  constructor(issues: ValidationIssue[]) {
+    super('Schema validation failed')
+    this.name = 'SchemaValidationError'
+    this.issues = issues
   }
 }
 

@@ -1,3 +1,5 @@
+import { DEV_CORS_ALLOWED_HEADERS, DEV_CORS_METHODS, STRICT_CORS_METHODS } from './constants.js'
+
 export interface CorsOptions {
   origin: (string | RegExp)[] | '*'
   credentials?: boolean
@@ -24,13 +26,13 @@ export function resolveCorsOptions(config: CorsConfig, nodeEnv: string | undefin
     return {
       origin: '*',
       credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['content-type', 'authorization'],
+      methods: DEV_CORS_METHODS,
+      allowedHeaders: DEV_CORS_ALLOWED_HEADERS,
     }
   }
 
   if (config === 'strict') {
-    return { origin: [], credentials: false, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] }
+    return { origin: [], credentials: false, methods: STRICT_CORS_METHODS }
   }
 
   if (config.origin === '*' && config.credentials) {

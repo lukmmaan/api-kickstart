@@ -1,5 +1,6 @@
 import amqp, { type ConsumeMessage } from 'amqplib'
 import type { BrokerAdapter, BrokerConsumeOptions } from 'api-kickstart'
+import { ATTEMPT_HEADER, DEFAULT_EXCHANGE_TYPE, DEFAULT_PREFETCH } from './constants.js'
 import type { RabbitmqOptions } from './types.js'
 
 export type { RabbitmqOptions }
@@ -9,7 +10,7 @@ type AmqpChannel = Awaited<ReturnType<AmqpConnection['createChannel']>>
 
 export function rabbitmq(options: RabbitmqOptions): BrokerAdapter {
   const exchange = options.exchange ?? ''
-  const exchangeType = options.exchangeType ?? 'topic'
+  const exchangeType = options.exchangeType ?? DEFAULT_EXCHANGE_TYPE
 
   let connectionPromise: Promise<AmqpConnection> | null = null
   let channelPromise: Promise<AmqpChannel> | null = null
@@ -43,7 +44,7 @@ export function rabbitmq(options: RabbitmqOptions): BrokerAdapter {
     consume(consumeOptions: BrokerConsumeOptions) {
       void (async () => {
         const channel = await getChannel()
-        await channel.prefetch(consumeOptions.concurrency ?? 1)
+        await channel.prefetch(consumeOptions.concurrency ?? DEFAULT_PREFETCH)
         const queueName = consumeOptions.group ? `${consumeOptions.topic}.${consumeOptions.group}` : consumeOptions.topic
         await channel.assertQueue(queueName, { durable: true })
         if (exchange) await channel.bindQueue(queueName, exchange, consumeOptions.topic)
@@ -53,7 +54,7 @@ export function rabbitmq(options: RabbitmqOptions): BrokerAdapter {
           void (async () => {
             try {
               const message = JSON.parse(msg.content.toString('utf8'))
-              const attempt = (msg.properties.headers?.['x-attempt'] as number | undefined) ?? 1
+              const attempt = (msg.properties.headers?.[ATTEMPT_HEADER] as number | undefined) ?? 1
               await consumeOptions.onMessage(message, { topic: consumeOptions.topic, attempt })
               channel.ack(msg)
             } catch {

@@ -1,0 +1,3 @@
+export const SEQUELIZE_UNIQUE_CONSTRAINT_ERROR = 'SequelizeUniqueConstraintError'
+export const SEQUELIZE_FOREIGN_KEY_CONSTRAINT_ERROR = 'SequelizeForeignKeyConstraintError'
+export const SEQUELIZE_VALIDATION_ERROR = 'SequelizeValidationError'

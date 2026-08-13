@@ -1,55 +1,37 @@
 import { randomUUID } from 'node:crypto'
-import { buildCorsHeaders, resolveCorsOptions, type CorsConfig, type CorsOptions } from './cors.js'
+import { buildCorsHeaders, type CorsOptions } from './cors.js'
 import { checkPermissions, checkRoles, resolveScope, type PermissionMap, type RoleHierarchy, type ScopeMap } from './authorize.js'
+import { resolveAppConfig, type CreateAppOptions } from './config.js'
 import { runWithContext } from './context.js'
-import { Forbidden, NotFound, Unauthorized, ValidationError, formatError } from './errors.js'
+import { Forbidden, NotFound, SchemaValidationError, Unauthorized, ValidationError, formatError } from './errors.js'
 import { GroupBuilder, type GroupOptions } from './group.js'
-import { defaultLogger } from './logger.js'
 import { runMiddlewareChain } from './middleware.js'
 import { buildOpenApiSpec, type OpenApiOptions } from './openapi.js'
 import { registerResource, type ResourceOptions } from './resource.js'
 import { compilePath, type CompiledRoute } from './router.js'
 import type { JwtAuthStrategy } from './auth/jwt.js'
-import {
-  SchemaValidationError,
-  type AuthenticatedUser,
-  type AuthStrategy,
-  type BrokerAdapter,
-  type ConsumeOptions,
-  type Context,
-  type DbAdapter,
-  type DispatchResult,
-  type FrameworkAdapter,
-  type Logger,
-  type Middleware,
-  type RawRequest,
-  type RequestLike,
-  type RouteConfig,
-  type Validator,
+import type {
+  AuthenticatedUser,
+  AuthStrategy,
+  BrokerAdapter,
+  ConsumeOptions,
+  Context,
+  DbAdapter,
+  DispatchResult,
+  Logger,
+  RawRequest,
+  RequestLike,
+  RouteConfig,
 } from './types.js'
 
 export * from './types.js'
-export { AppError, BadRequest, Conflict, Forbidden, InternalError, NotFound, Unauthorized, ValidationError } from './errors.js'
+export { AppError, BadRequest, Conflict, Forbidden, InternalError, NotFound, SchemaValidationError, Unauthorized, ValidationError } from './errors.js'
 export type { CorsConfig, CorsOptions } from './cors.js'
 export type { PermissionMap, RoleHierarchy, ScopeMap, ScopeResolver } from './authorize.js'
+export type { CreateAppOptions, ResolvedAppConfig } from './config.js'
 export type { ResourceOptions, ResourceHooks, ResourceAction } from './resource.js'
 export type { OpenApiOptions, OpenApiInfo } from './openapi.js'
 export { GroupBuilder, type GroupOptions } from './group.js'
-
-export interface CreateAppOptions {
-  framework: FrameworkAdapter
-  validator?: Validator
-  db?: DbAdapter
-  broker?: BrokerAdapter
-  auth?: AuthStrategy | AuthStrategy[]
-  cors?: CorsConfig
-  middleware?: Middleware[]
-  roleHierarchy?: RoleHierarchy
-  permissions?: PermissionMap
-  scope?: ScopeMap
-  scopeAudit?: 'off' | 'warn' | 'throw'
-  logger?: Logger
-}
 
 export interface AuthRoutesConfig {
   login?: string
@@ -84,12 +66,13 @@ export class App {
   private testUserOverride: AuthenticatedUser | null = null
 
   constructor(private options: CreateAppOptions) {
-    this.strategies = Array.isArray(options.auth) ? options.auth : options.auth ? [options.auth] : []
-    this.corsOptions = resolveCorsOptions(options.cors ?? 'off', process.env.NODE_ENV)
-    this.logger = options.logger ?? defaultLogger()
-    this.roleHierarchy = options.roleHierarchy ?? {}
-    this.permissionMap = options.permissions ?? {}
-    this.scopeMap = options.scope ?? {}
+    const resolved = resolveAppConfig(options)
+    this.strategies = resolved.strategies
+    this.corsOptions = resolved.corsOptions
+    this.logger = resolved.logger
+    this.roleHierarchy = resolved.roleHierarchy
+    this.permissionMap = resolved.permissionMap
+    this.scopeMap = resolved.scopeMap
     this.options.framework.onRequest((req, raw) => this.dispatch(req, raw))
   }
 

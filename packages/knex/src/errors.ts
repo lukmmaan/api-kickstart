@@ -1,12 +1,13 @@
 import { BadRequest, Conflict } from 'api-kickstart/errors'
+import { FOREIGN_KEY_VIOLATION_CODES, UNIQUE_VIOLATION_CODES } from './constants.js'
 
-const UNIQUE_CODES = new Set(['23505', 'ER_DUP_ENTRY', 'SQLITE_CONSTRAINT'])
-const FOREIGN_KEY_CODES = new Set(['23503', 'ER_NO_REFERENCED_ROW_2'])
+const uniqueCodes = new Set(UNIQUE_VIOLATION_CODES)
+const foreignKeyCodes = new Set(FOREIGN_KEY_VIOLATION_CODES)
 
 export function normalizeKnexError(err: unknown): Error | null {
   if (!(err instanceof Error)) return null
   const code = (err as Error & { code?: string }).code
-  if (code && UNIQUE_CODES.has(code)) return new Conflict('Unique constraint violation', { code })
-  if (code && FOREIGN_KEY_CODES.has(code)) return new BadRequest('Foreign key constraint violation', { code })
+  if (code && uniqueCodes.has(code)) return new Conflict('Unique constraint violation', { code })
+  if (code && foreignKeyCodes.has(code)) return new BadRequest('Foreign key constraint violation', { code })
   return null
 }

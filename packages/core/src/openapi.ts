@@ -1,3 +1,4 @@
+import { OPENAPI_RESPONSE_DESCRIPTIONS, OPENAPI_VERSION } from './constants.js'
 import type { RouteConfig } from './types.js'
 
 export interface OpenApiInfo {
@@ -36,18 +37,14 @@ export function buildOpenApiSpec(routes: RouteConfig[], options: OpenApiOptions)
         required: true,
         schema: { type: 'string' },
       })),
-      responses: {
-        '200': { description: 'Success' },
-        '400': { description: 'Validation error' },
-        '401': { description: 'Unauthorized' },
-        '403': { description: 'Forbidden' },
-        '404': { description: 'Not found' },
-      },
+      responses: Object.fromEntries(
+        Object.entries(OPENAPI_RESPONSE_DESCRIPTIONS).map(([status, description]) => [status, { description }]),
+      ),
     }
   }
 
   return {
-    openapi: '3.0.3',
+    openapi: OPENAPI_VERSION,
     info: options.info,
     servers: options.servers ?? [],
     components: {

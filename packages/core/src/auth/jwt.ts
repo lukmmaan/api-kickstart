@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { SignJWT, jwtVerify, type JWTPayload } from 'jose'
+import { DEFAULT_JWT_ACCESS_TTL, DEFAULT_JWT_ALGORITHM, DEFAULT_JWT_REFRESH_TTL, DEFAULT_JWT_TOKEN_SOURCES, TTL_UNIT_SECONDS } from '../constants.js'
 import { Unauthorized } from '../errors.js'
 import type { AuthenticateArgs, AuthenticatedUser, AuthStrategy } from '../types.js'
 import { memoryRefreshStore, type RefreshStore } from './refresh-store.js'
@@ -33,8 +34,7 @@ export interface JwtAuthStrategy extends AuthStrategy {
 function ttlToSeconds(ttl: string): number {
   const match = /^(\d+)(s|m|h|d)$/.exec(ttl)
   if (!match) throw new Error(`Invalid TTL: "${ttl}"`)
-  const multipliers = { s: 1, m: 60, h: 3600, d: 86400 } as const
-  return Number(match[1]) * multipliers[match[2] as keyof typeof multipliers]
+  return Number(match[1]) * TTL_UNIT_SECONDS[match[2] as keyof typeof TTL_UNIT_SECONDS]
 }
 
 function extractToken(args: AuthenticateArgs, from: string[]): string | null {
@@ -54,10 +54,10 @@ function extractToken(args: AuthenticateArgs, from: string[]): string | null {
 }
 
 export function jwt(options: JwtOptions): JwtAuthStrategy {
-  const algorithm = options.algorithm ?? 'HS256'
-  const accessTtl = options.accessTtl ?? '15m'
-  const refreshTtl = options.refreshTtl ?? '30d'
-  const from = options.from ?? ['header:authorization']
+  const algorithm = options.algorithm ?? DEFAULT_JWT_ALGORITHM
+  const accessTtl = options.accessTtl ?? DEFAULT_JWT_ACCESS_TTL
+  const refreshTtl = options.refreshTtl ?? DEFAULT_JWT_REFRESH_TTL
+  const from = options.from ?? DEFAULT_JWT_TOKEN_SOURCES
   const store = options.refreshStore ?? memoryRefreshStore()
   const secretKey = new TextEncoder().encode(options.secret)
 

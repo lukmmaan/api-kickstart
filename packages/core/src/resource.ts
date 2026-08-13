@@ -1,3 +1,4 @@
+import { DEFAULT_RESOURCE_ACTIONS } from './constants.js'
 import { NotFound } from './errors.js'
 import type { App } from './index.js'
 import type { Context } from './types.js'
@@ -40,7 +41,7 @@ function getModel(app: App, model: string): ModelClient {
 }
 
 export function registerResource(app: App, basePath: string, options: ResourceOptions): void {
-  const actions = options.only ?? (['list', 'get', 'create', 'update', 'delete'] satisfies ResourceAction[])
+  const actions: ResourceAction[] = options.only ?? [...DEFAULT_RESOURCE_ACTIONS]
 
   if (actions.includes('list')) {
     app.route({

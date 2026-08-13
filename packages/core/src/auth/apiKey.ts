@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
+import { DEFAULT_API_KEY_SOURCE } from '../constants.js'
 import type { AuthenticatedUser, AuthStrategy } from '../types.js'
 
 export interface ApiKeyOptions {
@@ -18,7 +19,7 @@ export function safeCompare(a: string, b: string): boolean {
 }
 
 export function apiKey(options: ApiKeyOptions): AuthStrategy {
-  const [kind, name] = (options.from ?? 'header:x-api-key').split(':')
+  const [kind, name] = (options.from ?? DEFAULT_API_KEY_SOURCE).split(':')
 
   return {
     name: 'apiKey',

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { DEFAULT_SESSION_COOKIE_NAME, DEFAULT_SESSION_TTL, TTL_UNIT_MILLISECONDS } from '../constants.js'
 import type { AuthenticatedUser, AuthStrategy } from '../types.js'
 
 export interface SessionRecord {
@@ -55,13 +56,12 @@ export interface SessionAuthStrategy extends AuthStrategy {
 function ttlToMs(ttl: string): number {
   const match = /^(\d+)(s|m|h|d)$/.exec(ttl)
   if (!match) throw new Error(`Invalid TTL: "${ttl}"`)
-  const multipliers = { s: 1000, m: 60000, h: 3600000, d: 86400000 } as const
-  return Number(match[1]) * multipliers[match[2] as keyof typeof multipliers]
+  return Number(match[1]) * TTL_UNIT_MILLISECONDS[match[2] as keyof typeof TTL_UNIT_MILLISECONDS]
 }
 
 export function session(options: SessionOptions): SessionAuthStrategy {
-  const cookieName = options.cookieName ?? 'sid'
-  const ttl = ttlToMs(options.ttl ?? '7d')
+  const cookieName = options.cookieName ?? DEFAULT_SESSION_COOKIE_NAME
+  const ttl = ttlToMs(options.ttl ?? DEFAULT_SESSION_TTL)
 
   return {
     name: 'session',

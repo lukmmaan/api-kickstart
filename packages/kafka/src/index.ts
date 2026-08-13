@@ -1,11 +1,12 @@
 import { Kafka, type Consumer, type Producer } from 'kafkajs'
 import type { BrokerAdapter, BrokerConsumeOptions } from 'api-kickstart'
+import { DEFAULT_CLIENT_ID, DEFAULT_CONCURRENCY, DEFAULT_GROUP_ID } from './constants.js'
 import type { KafkaOptions } from './types.js'
 
 export type { KafkaOptions }
 
 export function kafka(options: KafkaOptions): BrokerAdapter {
-  const client = new Kafka({ clientId: options.clientId ?? 'api-kickstart', brokers: options.brokers })
+  const client = new Kafka({ clientId: options.clientId ?? DEFAULT_CLIENT_ID, brokers: options.brokers })
   let producer: Producer | null = null
   const consumers: Consumer[] = []
 
@@ -25,12 +26,12 @@ export function kafka(options: KafkaOptions): BrokerAdapter {
 
     consume(consumeOptions: BrokerConsumeOptions) {
       void (async () => {
-        const consumer = client.consumer({ groupId: consumeOptions.group ?? options.groupId ?? 'api-kickstart' })
+        const consumer = client.consumer({ groupId: consumeOptions.group ?? options.groupId ?? DEFAULT_GROUP_ID })
         consumers.push(consumer)
         await consumer.connect()
         await consumer.subscribe({ topic: consumeOptions.topic, fromBeginning: false })
         await consumer.run({
-          partitionsConsumedConcurrently: consumeOptions.concurrency ?? 1,
+          partitionsConsumedConcurrently: consumeOptions.concurrency ?? DEFAULT_CONCURRENCY,
           eachMessage: async ({ message }) => {
             const payload = message.value ? JSON.parse(message.value.toString('utf8')) : null
             await consumeOptions.onMessage(payload, { topic: consumeOptions.topic, attempt: 1 })

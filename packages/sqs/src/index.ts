@@ -1,5 +1,6 @@
 import { DeleteMessageCommand, ReceiveMessageCommand, SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs'
 import type { BrokerAdapter, BrokerConsumeOptions } from 'api-kickstart'
+import { DEFAULT_CONCURRENCY, MAX_MESSAGES_PER_POLL, WAIT_TIME_SECONDS } from './constants.js'
 import type { SqsOptions } from './types.js'
 
 export type { SqsOptions }
@@ -22,8 +23,8 @@ export function sqs(options: SqsOptions = {}): BrokerAdapter {
           const response = await client.send(
             new ReceiveMessageCommand({
               QueueUrl: consumeOptions.topic,
-              MaxNumberOfMessages: Math.min(consumeOptions.concurrency ?? 1, 10),
-              WaitTimeSeconds: 10,
+              MaxNumberOfMessages: Math.min(consumeOptions.concurrency ?? DEFAULT_CONCURRENCY, MAX_MESSAGES_PER_POLL),
+              WaitTimeSeconds: WAIT_TIME_SECONDS,
               MessageSystemAttributeNames: ['ApproximateReceiveCount'],
             }),
           )
