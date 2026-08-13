@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { idempotency, rateLimit, timeout } from './builtins/index.js'
+import { idempotency, parseDurationMs, rateLimit, timeout } from './builtins/index.js'
 import { buildCorsHeaders, type CorsOptions } from './cors.js'
 import { checkPermissions, checkRoles, resolveScope, type PermissionMap, type RoleHierarchy, type ScopeMap } from './authorize.js'
 import { resolveAppConfig, type CreateAppOptions } from './config.js'
@@ -27,6 +27,7 @@ import type {
   RawRequest,
   RequestLike,
   RouteConfig,
+  StorageAdapter,
   UploadedFile,
 } from './types.js'
 
@@ -58,6 +59,7 @@ export { type HealthCheckOptions, type HealthCheckResult } from './health.js'
 export { MetricsCollector, type RouteMetrics } from './metrics.js'
 export { ScopeAuditError } from './scopeAudit.js'
 export { isMultipart, parseMultipart, type ParsedMultipart } from './multipart.js'
+export { parseCookieHeader } from './cookies.js'
 
 export interface AuthRoutesConfig {
   login?: string
@@ -87,6 +89,12 @@ export interface AppDiagnostics {
   scopeAudit: 'off' | 'warn' | 'throw'
 }
 
+export interface ScheduleOptions {
+  interval: string
+  runImmediately?: boolean
+  onError?: (err: unknown, name: string) => void
+}
+
 export class App {
   private compiledRoutes: CompiledRoute[] = []
   private strategies: AuthStrategy[]
@@ -100,6 +108,7 @@ export class App {
   private draining = false
   private inFlightRequests = 0
   private metricsCollector: MetricsCollector | null = null
+  private scheduledTimers: NodeJS.Timeout[] = []
 
   constructor(private options: CreateAppOptions) {
     const resolved = resolveAppConfig(options)
@@ -119,6 +128,10 @@ export class App {
 
   get broker(): BrokerAdapter | null {
     return this.options.broker ?? null
+  }
+
+  get storage(): StorageAdapter | null {
+    return this.options.storage ?? null
   }
 
   route(config: RouteConfig): this {
@@ -186,6 +199,26 @@ export class App {
         return Buffer.from(collector.toPrometheus())
       },
     })
+    return this
+  }
+
+  schedule(name: string, options: ScheduleOptions, handler: () => Promise<void> | void): this {
+    const intervalMs = parseDurationMs(options.interval)
+
+    const run = async () => {
+      try {
+        await handler()
+      } catch (err) {
+        if (options.onError) {
+          options.onError(err, name)
+        } else {
+          this.logger.error({ task: name, err })
+        }
+      }
+    }
+
+    if (options.runImmediately) void run()
+    this.scheduledTimers.push(setInterval(() => void run(), intervalMs))
     return this
   }
 
@@ -276,6 +309,7 @@ export class App {
           scope: {},
           db: this.options.db?.client ?? null,
           broker: this.options.broker ?? null,
+          storage: this.options.storage ?? null,
           logger,
           requestId,
           raw: { req: rawMessage, res: null },
@@ -308,6 +342,8 @@ export class App {
   }
 
   async close(): Promise<void> {
+    for (const timer of this.scheduledTimers) clearInterval(timer)
+    this.scheduledTimers = []
     await this.options.framework.close?.()
     await this.options.broker?.close?.()
     await this.options.db?.close?.()
@@ -477,6 +513,7 @@ export class App {
         scope,
         db: this.options.db?.client ?? null,
         broker: this.options.broker ?? null,
+        storage: this.options.storage ?? null,
         logger,
         requestId,
         raw,

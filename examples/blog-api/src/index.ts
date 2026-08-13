@@ -15,7 +15,7 @@ const auth = jwt({
     return user ? { id: user.id, role: user.role, username: user.username } : null
   },
   verifyCredentials: async ({ username, password }) => {
-    const user = findUserByCredentials(username, password)
+    const user = await findUserByCredentials(username, password)
     return user ? { id: user.id, role: user.role, username: user.username } : null
   },
 })

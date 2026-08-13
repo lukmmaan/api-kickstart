@@ -64,6 +64,7 @@ export interface Context<TUser = AuthenticatedUser> {
   scope: ScopeFilter
   db: unknown
   broker: BrokerAdapter | null
+  storage: StorageAdapter | null
   logger: Logger
   requestId: string
   raw: RawRequest
@@ -117,6 +118,22 @@ export interface BrokerAdapter {
   publish(topic: string, message: unknown, opts?: Record<string, unknown>): Promise<void>
   consume?(opts: BrokerConsumeOptions): void
   close?(): Promise<void>
+}
+
+export interface StorageObjectMeta {
+  contentType?: string
+  size?: number
+}
+
+export interface StorageSignedUrlOptions {
+  expiresInSeconds?: number
+}
+
+export interface StorageAdapter {
+  put(key: string, data: Buffer, meta?: StorageObjectMeta): Promise<void>
+  get(key: string): Promise<Buffer | null>
+  delete(key: string): Promise<void>
+  getSignedUrl(key: string, options?: StorageSignedUrlOptions): Promise<string>
 }
 
 export interface ConsumeOptions {

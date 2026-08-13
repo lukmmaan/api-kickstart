@@ -39,6 +39,7 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
 - [Core concepts](#core-concepts)
 - [Authentication](#authentication)
   - [JWT](#jwt)
+  - [Password hashing](#password-hashing)
   - [Session](#session)
   - [API key](#api-key)
   - [Basic auth](#basic-auth)
@@ -56,10 +57,12 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
 - [Errors](#errors)
 - [Database adapters](#database-adapters)
 - [Message brokers](#message-brokers)
+- [Storage](#storage)
 - [Framework adapters](#framework-adapters)
 - [Configuration](#configuration)
 - [OpenAPI generation](#openapi-generation)
 - [Health & metrics](#health--metrics)
+- [Scheduled tasks](#scheduled-tasks)
 - [Testing](#testing)
 - [CLI](#cli)
 - [Production checklist](#production-checklist)
@@ -208,6 +211,17 @@ app.useAuthRoutes({
 Refresh tokens are **rotated** by default: using one invalidates it and issues a new pair. If a rotated token is used again, the whole family is revoked — that's the standard defense against stolen refresh tokens.
 
 > Signing and verification use [`jose`](https://github.com/panva/jose) internally. This package handles the flow around tokens; it does not implement its own cryptography.
+
+### Password hashing
+
+```ts
+import { hashPassword, verifyPassword } from 'api-kickstart/auth'
+
+const hash = await hashPassword(plainTextPassword)   // scrypt, node:crypto, no extra dependency
+await verifyPassword(plainTextPassword, hash)          // constant-time compare
+```
+
+Use these in `jwt()`'s `verifyCredentials` or wherever you check a login. `hashPassword` generates a random salt per call and encodes `scrypt$<cost>$<salt>$<hash>` — `verifyPassword` reads the cost and salt back out of the stored string, so there's nothing else to persist.
 
 ### Session
 
@@ -687,7 +701,7 @@ middleware: [adapt(someExpressMiddleware)]
 Imported from `api-kickstart/middleware`, all real implementations — none of these are stubs:
 
 ```ts
-import { requestId, logger, rateLimit, compression, helmet, bodyLimit, timeout, idempotency, cache } from 'api-kickstart/middleware'
+import { requestId, logger, rateLimit, compression, helmet, bodyLimit, timeout, idempotency, cache, csrf } from 'api-kickstart/middleware'
 
 createApp({
   middleware: [
@@ -696,6 +710,7 @@ createApp({
     helmet(),                                       // security headers (nosniff, frameguard, HSTS, ...)
     compression({ threshold: 1024 }),               // gzip responses over the threshold, via node:zlib
     bodyLimit({ maxBytes: 1_000_000 }),             // 413 PayloadTooLarge over the limit
+    csrf(),                                          // double-submit-cookie CSRF check on unsafe methods
   ],
 })
 
@@ -721,7 +736,27 @@ app.route({
 })
 ```
 
-`rateLimit`, `idempotency`, and `cache` each accept a `store` option (`RateLimitStore` / `IdempotencyStore` / `CacheStore`) — the in-memory default is fine for a single instance; pass a Redis-backed store for multi-instance deployments.
+`rateLimit`, `idempotency`, and `cache` each accept a `store` option (`RateLimitStore` / `IdempotencyStore` / `CacheStore`) — the in-memory default is fine for a single instance. For anything running more than one instance behind a load balancer, `@kickstart/redis` provides real Redis-backed stores for all three, plus a session store:
+
+```ts
+import { redisRateLimitStore, redisIdempotencyStore, redisCacheStore, redisSessionStore } from '@kickstart/redis'
+import { rateLimit, idempotency, cache } from 'api-kickstart/middleware'
+import { session } from 'api-kickstart/auth'
+
+const redisOptions = { url: env.REDIS_URL }
+
+middleware: [
+  rateLimit({ window: '1m', max: 100, store: redisRateLimitStore('1m', redisOptions) }),
+  idempotency({ store: redisIdempotencyStore(redisOptions) }),
+  cache({ store: redisCacheStore(redisOptions) }),
+]
+
+session({ store: redisSessionStore(redisOptions) })
+```
+
+Every store accepts either `{ url }` or an existing `ioredis` client via `{ redis }`, plus an optional `keyPrefix`.
+
+`csrf()` implements the double-submit-cookie pattern: on a safe method (`GET`/`HEAD`/`OPTIONS` by default) it issues a `csrf_token` cookie if the client doesn't already have one; on any other method it requires an `x-csrf-token` header matching that cookie, or responds `403`. It's for cookie/session-based auth — bearer-token APIs (the default `jwt()` setup) aren't vulnerable to CSRF and don't need it.
 
 ---
 
@@ -959,6 +994,34 @@ On `SIGTERM` (and `SIGINT`), in order: stop accepting new HTTP requests (in-flig
 
 ---
 
+## Storage
+
+For persisting uploaded files (see [File uploads](#file-uploads)) or any other blob somewhere durable. Optional — skip the import and nothing storage-related is loaded.
+
+```ts
+import { s3Storage } from '@kickstart/s3'
+
+const app = createApp({
+  storage: s3Storage({ bucket: env.UPLOADS_BUCKET, region: env.AWS_REGION }),
+})
+
+app.route({
+  method: 'POST',
+  path: '/avatars',
+  auth: true,
+  handler: async (ctx) => {
+    const file = ctx.files.avatar[0]
+    const key = `avatars/${ctx.user.id}`
+    await ctx.storage.put(key, file.data, { contentType: file.contentType })
+    return { url: await ctx.storage.getSignedUrl(key, { expiresInSeconds: 300 }) }
+  },
+})
+```
+
+`@kickstart/s3` works against any S3-compatible endpoint (AWS S3, MinIO, R2, Cloudflare) — pass `endpoint` and `forcePathStyle: true` for the non-AWS ones. Write your own `StorageAdapter` (`put`, `get`, `delete`, `getSignedUrl`) to target something else; there's nothing S3-specific in how core uses it.
+
+---
+
 ## Framework adapters
 
 | Adapter | Framework |
@@ -1062,6 +1125,20 @@ app.metrics('/metrics')   // Prometheus text format
 
 ---
 
+## Scheduled tasks
+
+Recurring work that isn't tied to an incoming request or a queue message — cache warmups, cleanup sweeps, digest emails:
+
+```ts
+app.schedule('expire-sessions', { interval: '1h', runImmediately: true }, async () => {
+  await db.session.deleteMany({ where: { expiresAt: { lt: new Date() } } })
+})
+```
+
+This is `setInterval` under the hood, running in-process — not a cron-expression parser and not distributed across instances (if you run 3 instances, the task runs 3 times). For that, use a broker consumer or an external scheduler hitting an authenticated route instead. What it does give you: errors in the handler are caught and logged (or routed to `onError`) instead of crashing the process, and every scheduled task is stopped automatically by `app.close()`.
+
+---
+
 ## Testing
 
 ```ts
@@ -1090,7 +1167,7 @@ expect(app.broker.published).toContainEqual(
 
 ## CLI
 
-Both commands read a config file — `api-kickstart.config.mjs` in the current directory by default, or `--config <path>`:
+Every command reads a config file — `api-kickstart.config.mjs` in the current directory by default, or `--config <path>`:
 
 ```ts
 // api-kickstart.config.mjs
@@ -1107,8 +1184,13 @@ export { envSchema }
 npx api-kickstart doctor                            # run the production checklist, exit 1 on any failure
 npx api-kickstart env:example                        # write .env.example from envSchema
 npx api-kickstart env:example --out .env.sample       # custom output path
+npx api-kickstart routes                             # print every registered route: method, path, auth, roles, scope
+npx api-kickstart openapi:generate                   # write the app's already-registered OpenAPI spec to openapi.json
+npx api-kickstart openapi:generate --path /docs.json --out ./dist/openapi.json
 npx api-kickstart <command> --config ./path/to/config.mjs
 ```
+
+`openapi:generate` doesn't rebuild the spec — it calls the route your app already registered via `app.openapi({ json: '...' })` and writes the response to disk, so `--path` must match whatever path you passed there.
 
 ---
 
@@ -1133,6 +1215,8 @@ Not yet automated — verify these yourself:
 
 - [ ] Response validation passes across your test suite (`response` schemas run automatically outside `NODE_ENV=production`)
 - [ ] Broker consumers are idempotent when an outbox is enabled
+- [ ] Passwords are stored via `hashPassword()`, never plain text (`doctor` has no way to inspect your database)
+- [ ] `csrf()` is in the middleware chain for any route reachable via cookie/session auth (bearer-token routes don't need it)
 
 ---
 
@@ -1189,11 +1273,18 @@ Tests run with `vitest` (`npm test`), linting with `eslint` (`npm run lint`), an
 - [x] `app.health()` / `app.metrics()` — liveness checks and Prometheus-format metrics
 - [x] `multipart/form-data` parsing on every framework adapter, no extra dependency
 - [x] `@kickstart/pino` — structured logger, swaps in for the default console logger
+- [x] `hashPassword()` / `verifyPassword()` — scrypt-based, no extra dependency
+- [x] `@kickstart/redis` — Redis-backed `rateLimit`/`idempotency`/`cache`/`session` stores, for running behind a load balancer
+- [x] `@kickstart/s3` — `StorageAdapter` for S3-compatible object storage (AWS S3, MinIO, R2), exposed on `ctx.storage`
+- [x] `csrf()` — double-submit-cookie middleware for cookie/session-based auth
+- [x] `npx api-kickstart routes` / `openapi:generate` CLI commands
+- [x] `app.schedule()` — interval-based in-process recurring tasks, stopped by `app.close()`
 - [ ] `scopeAudit` can't verify a handler that reads `ctx.scope` but doesn't actually apply it to the query it runs — only "never touched it at all" is detectable without per-adapter query interception
 - [ ] OpenAPI schema introspection for Joi, Yup, Valibot (currently paths/params/auth work everywhere; body/response schemas are Zod- and TypeBox-only)
 - [ ] Outbox stores for adapters beyond `pg`
+- [ ] `app.schedule()` is single-instance only — no distributed lock, so it runs once per instance, not once per cluster
 
-Every adapter and built-in listed above as done is a real implementation, not a placeholder. Contributions welcome, especially on the three items still open.
+Every adapter and built-in listed above as done is a real implementation, not a placeholder. Contributions welcome, especially on the items still open.
 
 ---
 
