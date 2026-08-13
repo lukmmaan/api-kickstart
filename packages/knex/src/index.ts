@@ -2,6 +2,8 @@ import type { Knex } from 'knex'
 import type { DbAdapter, ScopeFilter } from 'api-kickstart'
 import { normalizeKnexError } from './errors.js'
 
+export { knexOutboxStore, type KnexOutboxStoreOptions } from './outbox.js'
+
 export function knex(client: Knex): DbAdapter {
   return {
     client,

@@ -1,6 +1,6 @@
 import { Redis } from 'ioredis'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
-import { redisCacheStore, redisIdempotencyStore, redisRateLimitStore, redisSessionStore } from './index.js'
+import { redisCacheStore, redisIdempotencyStore, redisLock, redisRateLimitStore, redisSessionStore } from './index.js'
 
 const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379')
 const keyPrefix = 'kickstart-test:'
@@ -74,5 +74,60 @@ describe('redisSessionStore', () => {
     const store = redisSessionStore({ redis, keyPrefix })
     await store.set('sid-3', { userId: 'u1', data: { id: 'u1' }, expiresAt: Date.now() - 1000 })
     await expect(store.get('sid-3')).resolves.toBeNull()
+  })
+})
+
+describe('redisLock', () => {
+  it('grants the lock to the first acquirer and denies a second concurrent acquirer', async () => {
+    const lockA = redisLock({ redis, keyPrefix })
+    const lockB = redisLock({ redis, keyPrefix })
+
+    await expect(lockA.acquire('nightly-report', 5000)).resolves.toBe(true)
+    await expect(lockB.acquire('nightly-report', 5000)).resolves.toBe(false)
+  })
+
+  it('lets another holder acquire the lock after release', async () => {
+    const lockA = redisLock({ redis, keyPrefix })
+    const lockB = redisLock({ redis, keyPrefix })
+
+    await lockA.acquire('nightly-report', 5000)
+    await lockA.release('nightly-report')
+
+    await expect(lockB.acquire('nightly-report', 5000)).resolves.toBe(true)
+  })
+
+  it('lets another holder acquire the lock once the TTL expires', async () => {
+    const lockA = redisLock({ redis, keyPrefix })
+    const lockB = redisLock({ redis, keyPrefix })
+
+    await lockA.acquire('short-lived', 50)
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    await expect(lockB.acquire('short-lived', 5000)).resolves.toBe(true)
+  })
+
+  it('release() is a safe no-op when the caller never held the lock', async () => {
+    const lock = redisLock({ redis, keyPrefix })
+    await expect(lock.release('never-acquired')).resolves.toBeUndefined()
+  })
+
+  it('a stale release from a holder whose TTL already expired does not evict the current holder', async () => {
+    const lockA = redisLock({ redis, keyPrefix })
+    const lockB = redisLock({ redis, keyPrefix })
+    const lockC = redisLock({ redis, keyPrefix })
+
+    await lockA.acquire('race', 50)
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    await lockB.acquire('race', 5000)
+
+    await lockA.release('race')
+
+    await expect(lockC.acquire('race', 5000)).resolves.toBe(false)
+  })
+
+  it('keeps independent locks per key', async () => {
+    const lock = redisLock({ redis, keyPrefix })
+    await expect(lock.acquire('a', 5000)).resolves.toBe(true)
+    await expect(lock.acquire('b', 5000)).resolves.toBe(true)
   })
 })

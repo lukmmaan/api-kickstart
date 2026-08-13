@@ -244,4 +244,32 @@ describe('App openapi()', () => {
     const spec = res.body as { paths: Record<string, unknown> }
     expect(spec.paths).toHaveProperty('/users/{id}')
   })
+
+  it('serves a real interactive HTML docs page at "serve", pointing at "json"', async () => {
+    const app = createApp({ framework: fakeFramework(), validator: testValidator })
+    app.route({ method: 'GET', path: '/users/:id', auth: false, handler: async () => ({}) })
+    app.openapi({ info: { title: 'Test API', version: '1.0.0' }, json: '/openapi.json', serve: '/docs' })
+
+    const res = await app.inject({ method: 'GET', path: '/docs' })
+    expect(res.status).toBe(200)
+    expect(res.headers['content-type']).toContain('text/html')
+    const html = res.body as Buffer
+    expect(Buffer.isBuffer(html)).toBe(true)
+    const text = html.toString('utf8')
+    expect(text).toContain('<title>Test API</title>')
+    expect(text).toContain('data-url="/openapi.json"')
+    expect(text).toContain('@scalar/api-reference')
+  })
+
+  it('inlines the spec into the docs page when only "serve" is configured, no "json"', async () => {
+    const app = createApp({ framework: fakeFramework(), validator: testValidator })
+    app.route({ method: 'GET', path: '/users/:id', auth: false, handler: async () => ({}) })
+    app.openapi({ info: { title: 'Test API', version: '1.0.0' }, serve: '/docs' })
+
+    const res = await app.inject({ method: 'GET', path: '/docs' })
+    const text = (res.body as Buffer).toString('utf8')
+    expect(text).toContain('data-configuration=')
+    expect(text).toContain('/users/{id}')
+    expect(text).not.toContain('data-url=')
+  })
 })

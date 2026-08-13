@@ -120,6 +120,11 @@ export interface BrokerAdapter {
   close?(): Promise<void>
 }
 
+export interface Lock {
+  acquire(key: string, ttlMs: number): Promise<boolean>
+  release(key: string): Promise<void>
+}
+
 export interface StorageObjectMeta {
   contentType?: string
   size?: number

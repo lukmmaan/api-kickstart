@@ -2,6 +2,8 @@ import type { ClientSession, MongoClient } from 'mongodb'
 import type { DbAdapter, ScopeFilter } from 'api-kickstart'
 import { normalizeMongoError } from './errors.js'
 
+export { mongodbOutboxStore, type MongodbOutboxStoreOptions } from './outbox.js'
+
 export interface MongodbOptions {
   dbName?: string
 }

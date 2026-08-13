@@ -73,6 +73,7 @@ app.metrics()
 app.openapi({
   info: { title: 'Blog API', version: '1.0.0', description: 'api-kickstart reference example' },
   json: '/openapi.json',
+  serve: '/docs',
 })
 
 const port = Number(process.env.PORT ?? 3000)

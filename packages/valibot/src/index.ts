@@ -1,4 +1,5 @@
 import * as v from 'valibot'
+import { toJsonSchema as valibotToJsonSchema } from '@valibot/to-json-schema'
 import { SchemaValidationError, type Validator } from 'api-kickstart'
 
 export function valibot(): Validator {
@@ -14,6 +15,9 @@ export function valibot(): Validator {
         throw new SchemaValidationError(issues)
       }
       return result.output
+    },
+    toJsonSchema(schema) {
+      return valibotToJsonSchema(schema as v.GenericSchema)
     },
   }
 }
