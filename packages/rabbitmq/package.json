@@ -1,0 +1,27 @@
+{
+  "name": "@kickstart/rabbitmq",
+  "version": "0.1.0",
+  "description": "api-kickstart message broker adapter for RabbitMQ (AMQP 0-9-1).",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "api-kickstart": "^0.1.0",
+    "amqplib": "^0.10.4"
+  },
+  "devDependencies": {
+    "api-kickstart": "^0.1.0",
+    "amqplib": "^0.10.4",
+    "@types/amqplib": "^0.10.5",
+    "typescript": "^5.5.4",
+    "@types/node": "^22.5.0"
+  }
+}
