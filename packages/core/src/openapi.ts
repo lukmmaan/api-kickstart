@@ -1,4 +1,4 @@
-import { OPENAPI_RESPONSE_DESCRIPTIONS, OPENAPI_VERSION } from './constants.js'
+import { OPENAPI_RESPONSE_DESCRIPTIONS, OPENAPI_VERSION, SCALAR_CDN_URL } from './constants.js'
 import type { RouteConfig, Validator } from './types.js'
 
 export interface OpenApiInfo {
@@ -100,4 +100,28 @@ export function buildOpenApiSpec(routes: RouteConfig[], options: OpenApiOptions,
     },
     paths,
   }
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+export function buildScalarHtml(title: string, jsonPath: string | undefined, spec: Record<string, unknown>): string {
+  const scriptAttrs = jsonPath
+    ? `data-url="${escapeHtml(jsonPath)}"`
+    : `data-configuration="${escapeHtml(JSON.stringify({ spec: { content: spec } }))}"`
+
+  return `<!doctype html>
+<html>
+  <head>
+    <title>${escapeHtml(title)}</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <script id="api-reference" ${scriptAttrs}></script>
+    <script src="${SCALAR_CDN_URL}"></script>
+  </body>
+</html>
+`
 }

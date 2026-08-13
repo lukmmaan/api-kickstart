@@ -15,11 +15,13 @@
   },
   "peerDependencies": {
     "api-kickstart": "^0.1.0",
-    "yup": "^1.4.0"
+    "yup": "^1.4.0",
+    "@sodaru/yup-to-json-schema": "^2.0.1"
   },
   "devDependencies": {
     "api-kickstart": "^0.1.0",
     "yup": "^1.4.0",
+    "@sodaru/yup-to-json-schema": "^2.0.1",
     "typescript": "^5.5.4",
     "@types/node": "^22.5.0"
   }

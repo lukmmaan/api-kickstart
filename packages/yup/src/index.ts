@@ -1,4 +1,5 @@
 import { ValidationError, type Schema } from 'yup'
+import { convertSchema } from '@sodaru/yup-to-json-schema'
 import { SchemaValidationError, type Validator } from 'api-kickstart'
 
 export function yup(): Validator {
@@ -16,6 +17,9 @@ export function yup(): Validator {
         }
         throw err
       }
+    },
+    toJsonSchema(schema) {
+      return convertSchema(schema as Schema)
     },
   }
 }

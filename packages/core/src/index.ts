@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { idempotency, rateLimit, timeout } from './builtins/index.js'
+import { idempotency, parseDurationMs, rateLimit, timeout } from './builtins/index.js'
 import { buildCorsHeaders, type CorsOptions } from './cors.js'
 import { checkPermissions, checkRoles, resolveScope, type PermissionMap, type RoleHierarchy, type ScopeMap } from './authorize.js'
 import { resolveAppConfig, type CreateAppOptions } from './config.js'
@@ -10,7 +10,7 @@ import { runHealthChecks, type HealthCheckOptions } from './health.js'
 import { MetricsCollector } from './metrics.js'
 import { runMiddlewareChain } from './middleware.js'
 import { isMultipart, parseMultipart } from './multipart.js'
-import { buildOpenApiSpec, type OpenApiOptions } from './openapi.js'
+import { buildOpenApiSpec, buildScalarHtml, type OpenApiOptions } from './openapi.js'
 import { registerResource, type ResourceOptions } from './resource.js'
 import { compilePath, type CompiledRoute } from './router.js'
 import { auditedScope, ScopeAuditError } from './scopeAudit.js'
@@ -23,10 +23,12 @@ import type {
   Context,
   DbAdapter,
   DispatchResult,
+  Lock,
   Logger,
   RawRequest,
   RequestLike,
   RouteConfig,
+  StorageAdapter,
   UploadedFile,
 } from './types.js'
 
@@ -49,7 +51,7 @@ export type { CorsConfig, CorsOptions } from './cors.js'
 export type { PermissionMap, RoleHierarchy, ScopeMap, ScopeResolver } from './authorize.js'
 export type { CreateAppOptions, ResolvedAppConfig } from './config.js'
 export type { ResourceOptions, ResourceHooks, ResourceAction } from './resource.js'
-export type { OpenApiOptions, OpenApiInfo } from './openapi.js'
+export { buildOpenApiSpec, buildScalarHtml, type OpenApiOptions, type OpenApiInfo } from './openapi.js'
 export { GroupBuilder, type GroupOptions } from './group.js'
 export { gracefulShutdown, type GracefulShutdownOptions } from './lifecycle.js'
 export { runDoctorChecks, type DoctorCheck } from './doctor.js'
@@ -58,6 +60,8 @@ export { type HealthCheckOptions, type HealthCheckResult } from './health.js'
 export { MetricsCollector, type RouteMetrics } from './metrics.js'
 export { ScopeAuditError } from './scopeAudit.js'
 export { isMultipart, parseMultipart, type ParsedMultipart } from './multipart.js'
+export { parseCookieHeader } from './cookies.js'
+export { signWebhook, verifyWebhook, WebhookSignatureError, type SignWebhookOptions, type VerifyWebhookOptions } from './webhooks.js'
 
 export interface AuthRoutesConfig {
   login?: string
@@ -87,6 +91,14 @@ export interface AppDiagnostics {
   scopeAudit: 'off' | 'warn' | 'throw'
 }
 
+export interface ScheduleOptions {
+  interval: string
+  runImmediately?: boolean
+  onError?: (err: unknown, name: string) => void
+  lock?: Lock
+  lockTtlMs?: number
+}
+
 export class App {
   private compiledRoutes: CompiledRoute[] = []
   private strategies: AuthStrategy[]
@@ -100,6 +112,7 @@ export class App {
   private draining = false
   private inFlightRequests = 0
   private metricsCollector: MetricsCollector | null = null
+  private scheduledTimers: NodeJS.Timeout[] = []
 
   constructor(private options: CreateAppOptions) {
     const resolved = resolveAppConfig(options)
@@ -119,6 +132,10 @@ export class App {
 
   get broker(): BrokerAdapter | null {
     return this.options.broker ?? null
+  }
+
+  get storage(): StorageAdapter | null {
+    return this.options.storage ?? null
   }
 
   route(config: RouteConfig): this {
@@ -186,6 +203,37 @@ export class App {
         return Buffer.from(collector.toPrometheus())
       },
     })
+    return this
+  }
+
+  schedule(name: string, options: ScheduleOptions, handler: () => Promise<void> | void): this {
+    const intervalMs = parseDurationMs(options.interval)
+    const lockKey = `schedule:${name}`
+    const lockTtlMs = options.lockTtlMs ?? intervalMs
+
+    const run = async () => {
+      let acquired = true
+      try {
+        if (options.lock) {
+          acquired = await options.lock.acquire(lockKey, lockTtlMs)
+          if (!acquired) return
+        }
+        await handler()
+      } catch (err) {
+        if (options.onError) {
+          options.onError(err, name)
+        } else {
+          this.logger.error({ task: name, err })
+        }
+      } finally {
+        if (options.lock && acquired) {
+          await options.lock.release(lockKey)
+        }
+      }
+    }
+
+    if (options.runImmediately) void run()
+    this.scheduledTimers.push(setInterval(() => void run(), intervalMs))
     return this
   }
 
@@ -276,6 +324,7 @@ export class App {
           scope: {},
           db: this.options.db?.client ?? null,
           broker: this.options.broker ?? null,
+          storage: this.options.storage ?? null,
           logger,
           requestId,
           raw: { req: rawMessage, res: null },
@@ -292,10 +341,24 @@ export class App {
 
   openapi(options: OpenApiOptions): this {
     const spec = buildOpenApiSpec(this.routes(), options, this.options.validator)
-    const paths = [options.json, options.serve].filter((p): p is string => Boolean(p))
-    for (const path of paths) {
-      this.route({ method: 'GET', path, auth: false, handler: async () => spec })
+
+    if (options.json) {
+      this.route({ method: 'GET', path: options.json, auth: false, handler: async () => spec })
     }
+
+    if (options.serve) {
+      const html = buildScalarHtml(options.info.title, options.json, spec)
+      this.route({
+        method: 'GET',
+        path: options.serve,
+        auth: false,
+        handler: async (ctx) => {
+          ctx.response.headers['content-type'] = 'text/html; charset=utf-8'
+          return Buffer.from(html)
+        },
+      })
+    }
+
     return this
   }
 
@@ -308,6 +371,8 @@ export class App {
   }
 
   async close(): Promise<void> {
+    for (const timer of this.scheduledTimers) clearInterval(timer)
+    this.scheduledTimers = []
     await this.options.framework.close?.()
     await this.options.broker?.close?.()
     await this.options.db?.close?.()
@@ -477,6 +542,7 @@ export class App {
         scope,
         db: this.options.db?.client ?? null,
         broker: this.options.broker ?? null,
+        storage: this.options.storage ?? null,
         logger,
         requestId,
         raw,

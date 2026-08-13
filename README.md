@@ -39,6 +39,7 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
 - [Core concepts](#core-concepts)
 - [Authentication](#authentication)
   - [JWT](#jwt)
+  - [Password hashing](#password-hashing)
   - [Session](#session)
   - [API key](#api-key)
   - [Basic auth](#basic-auth)
@@ -56,10 +57,13 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
 - [Errors](#errors)
 - [Database adapters](#database-adapters)
 - [Message brokers](#message-brokers)
+- [Storage](#storage)
+- [Webhooks](#webhooks)
 - [Framework adapters](#framework-adapters)
 - [Configuration](#configuration)
 - [OpenAPI generation](#openapi-generation)
 - [Health & metrics](#health--metrics)
+- [Scheduled tasks](#scheduled-tasks)
 - [Testing](#testing)
 - [CLI](#cli)
 - [Production checklist](#production-checklist)
@@ -208,6 +212,17 @@ app.useAuthRoutes({
 Refresh tokens are **rotated** by default: using one invalidates it and issues a new pair. If a rotated token is used again, the whole family is revoked — that's the standard defense against stolen refresh tokens.
 
 > Signing and verification use [`jose`](https://github.com/panva/jose) internally. This package handles the flow around tokens; it does not implement its own cryptography.
+
+### Password hashing
+
+```ts
+import { hashPassword, verifyPassword } from 'api-kickstart/auth'
+
+const hash = await hashPassword(plainTextPassword)   // scrypt, node:crypto, no extra dependency
+await verifyPassword(plainTextPassword, hash)          // constant-time compare
+```
+
+Use these in `jwt()`'s `verifyCredentials` or wherever you check a login. `hashPassword` generates a random salt per call and encodes `scrypt$<cost>$<salt>$<hash>` — `verifyPassword` reads the cost and salt back out of the stored string, so there's nothing else to persist.
 
 ### Session
 
@@ -687,7 +702,7 @@ middleware: [adapt(someExpressMiddleware)]
 Imported from `api-kickstart/middleware`, all real implementations — none of these are stubs:
 
 ```ts
-import { requestId, logger, rateLimit, compression, helmet, bodyLimit, timeout, idempotency, cache } from 'api-kickstart/middleware'
+import { requestId, logger, rateLimit, compression, helmet, bodyLimit, timeout, idempotency, cache, csrf } from 'api-kickstart/middleware'
 
 createApp({
   middleware: [
@@ -696,6 +711,7 @@ createApp({
     helmet(),                                       // security headers (nosniff, frameguard, HSTS, ...)
     compression({ threshold: 1024 }),               // gzip responses over the threshold, via node:zlib
     bodyLimit({ maxBytes: 1_000_000 }),             // 413 PayloadTooLarge over the limit
+    csrf(),                                          // double-submit-cookie CSRF check on unsafe methods
   ],
 })
 
@@ -721,7 +737,50 @@ app.route({
 })
 ```
 
-`rateLimit`, `idempotency`, and `cache` each accept a `store` option (`RateLimitStore` / `IdempotencyStore` / `CacheStore`) — the in-memory default is fine for a single instance; pass a Redis-backed store for multi-instance deployments.
+`rateLimit`, `idempotency`, and `cache` each accept a `store` option (`RateLimitStore` / `IdempotencyStore` / `CacheStore`) — the in-memory default is fine for a single instance. For anything running more than one instance behind a load balancer, `@kickstart/redis` provides real Redis-backed stores for all three, plus a session store:
+
+```ts
+import { redisRateLimitStore, redisIdempotencyStore, redisCacheStore, redisSessionStore } from '@kickstart/redis'
+import { rateLimit, idempotency, cache } from 'api-kickstart/middleware'
+import { session } from 'api-kickstart/auth'
+
+const redisOptions = { url: env.REDIS_URL }
+
+middleware: [
+  rateLimit({ window: '1m', max: 100, store: redisRateLimitStore('1m', redisOptions) }),
+  idempotency({ store: redisIdempotencyStore(redisOptions) }),
+  cache({ store: redisCacheStore(redisOptions) }),
+]
+
+session({ store: redisSessionStore(redisOptions) })
+```
+
+Every store accepts either `{ url }` or an existing `ioredis` client via `{ redis }`, plus an optional `keyPrefix`.
+
+`csrf()` implements the double-submit-cookie pattern: on a safe method (`GET`/`HEAD`/`OPTIONS` by default) it issues a `csrf_token` cookie if the client doesn't already have one; on any other method it requires an `x-csrf-token` header matching that cookie, or responds `403`. It's for cookie/session-based auth — bearer-token APIs (the default `jwt()` setup) aren't vulnerable to CSRF and don't need it.
+
+### Audit logging
+
+Structured "who did what" records — distinct from `scopeAudit`, which is about catching a handler that forgot to apply its scope filter, not about producing a compliance trail:
+
+```ts
+import { auditLog } from 'api-kickstart/middleware'
+
+createApp({
+  middleware: [
+    auditLog({
+      sink: { record: (entry) => db.auditLog.create({ data: entry }) },   // default: ctx.logger.info
+      action: (ctx) => `${ctx.method.toLowerCase()}:${ctx.path}`,
+      resource: (ctx) => (ctx.params as { id?: string })?.id,
+      skip: (ctx) => ctx.path === '/health',
+    }),
+  ],
+})
+```
+
+Each entry carries `timestamp`, `requestId`, `userId`, `method`, `path`, `status`, and whatever `action`/`resource`/`metadata` you derive from `ctx`. It records after the handler runs — on success or on a thrown `AppError` (mapped to that error's status; anything else records as `500`) — so both outcomes land in the trail.
+
+**What it doesn't cover:** auth failures, role/permission failures, and `scopeAudit` violations all happen in `dispatch()` before or after the middleware chain runs, so they never reach `auditLog`. If you need those in the trail too, log them at the strategy/authorize level, or from `doctor`-adjacent tooling — this middleware only sees requests that reach a route's handler.
 
 ---
 
@@ -944,7 +1003,7 @@ handler: async (ctx) => {
 
 A background relay (started automatically once `outbox` is set, stopped by `broker.close()`) polls for unpublished rows and delivers them for real, with at-least-once semantics — that means consumers **must be idempotent**.
 
-`@kickstart/pg` ships the reference `pgOutboxStore`; `rabbitmq()` and `kafka()` both accept the `outbox` option. Implementing `OutboxStore` (`save`, `listPending`, `markPublished`) against another database plugs the same mechanism into it.
+Three `OutboxStore` implementations ship out of the box — `pgOutboxStore` (`@kickstart/pg`), `knexOutboxStore` (`@kickstart/knex`, works against Postgres/MySQL/SQLite/anything Knex supports), and `mongodbOutboxStore` (`@kickstart/mongodb`). `rabbitmq()` and `kafka()` both accept the `outbox` option. Implementing `OutboxStore` (`save`, `listPending`, `markPublished`) against another database plugs the same mechanism into it.
 
 ### Graceful shutdown
 
@@ -956,6 +1015,68 @@ gracefulShutdown(app, { drainTimeoutMs: 10_000, closeTimeoutMs: 10_000 })
 ```
 
 On `SIGTERM` (and `SIGINT`), in order: stop accepting new HTTP requests (in-flight ones still get a response) → wait for in-flight requests to finish, up to `drainTimeoutMs` → close the framework, broker, and database, up to `closeTimeoutMs` → exit. Getting this order wrong is how requests get cut off mid-response.
+
+---
+
+## Storage
+
+For persisting uploaded files (see [File uploads](#file-uploads)) or any other blob somewhere durable. Optional — skip the import and nothing storage-related is loaded.
+
+```ts
+import { s3Storage } from '@kickstart/s3'
+
+const app = createApp({
+  storage: s3Storage({ bucket: env.UPLOADS_BUCKET, region: env.AWS_REGION }),
+})
+
+app.route({
+  method: 'POST',
+  path: '/avatars',
+  auth: true,
+  handler: async (ctx) => {
+    const file = ctx.files.avatar[0]
+    const key = `avatars/${ctx.user.id}`
+    await ctx.storage.put(key, file.data, { contentType: file.contentType })
+    return { url: await ctx.storage.getSignedUrl(key, { expiresInSeconds: 300 }) }
+  },
+})
+```
+
+`@kickstart/s3` works against any S3-compatible endpoint (AWS S3, MinIO, R2, Cloudflare) — pass `endpoint` and `forcePathStyle: true` for the non-AWS ones. Write your own `StorageAdapter` (`put`, `get`, `delete`, `getSignedUrl`) to target something else; there's nothing S3-specific in how core uses it.
+
+---
+
+## Webhooks
+
+HMAC-SHA256 signing and verification, for receiving webhooks from a provider and for signing your own outbound ones — the same pattern Stripe and GitHub use:
+
+```ts
+import { signWebhook, verifyWebhook, WebhookSignatureError } from 'api-kickstart'
+
+// sending
+const body = JSON.stringify({ event: 'order.created', orderId: order.id })
+const signature = signWebhook(body, { secret: env.WEBHOOK_SECRET })
+await fetch(subscriberUrl, { method: 'POST', body, headers: { 'x-signature': signature } })
+
+// receiving
+app.route({
+  method: 'POST',
+  path: '/webhooks/inbound',
+  auth: false,
+  handler: async (ctx) => {
+    const rawBody = JSON.stringify(ctx.body)
+    try {
+      verifyWebhook(rawBody, ctx.headers['x-signature'] as string, { secret: env.WEBHOOK_SECRET })
+    } catch (err) {
+      if (err instanceof WebhookSignatureError) throw new Unauthorized('Invalid webhook signature')
+      throw err
+    }
+    // ctx.body is now trusted
+  },
+})
+```
+
+The signature header is `t=<timestamp>,v1=<hex hmac>` — the timestamp is part of what's signed, and `verifyWebhook` rejects anything outside a tolerance window (`toleranceSeconds`, default 5 minutes) to block replay of an intercepted request. Comparison is constant-time.
 
 ---
 
@@ -1022,14 +1143,16 @@ Because routes are data, the spec is free:
 app.openapi({
   info: { title: 'My API', version: '1.0.0' },
   servers: [{ url: 'https://api.example.com' }],
-  serve: '/docs',        // serves the same spec JSON at this path too
-  json: '/openapi.json',
+  json: '/openapi.json',  // raw spec as JSON
+  serve: '/docs',         // a real interactive docs page (Scalar), pointed at `json`
 })
 ```
 
+`serve` renders an actual HTML page — [Scalar](https://scalar.com)'s API reference UI, loaded from its CDN script and pointed at `json` via `data-url`. If you configure `serve` without `json`, the spec is embedded directly into the page instead, so you still get interactive docs without exposing a separate raw-JSON endpoint.
+
 Paths, parameters, path-parameter names, auth requirements (`security`), tags, and summaries are derived from what you already declared on each route — no decorators, no JSDoc comments, no second source of truth that drifts.
 
-**Request and response schemas** are included too, when the configured validator supports it — `@kickstart/zod` (via `zod-to-json-schema`) and `@kickstart/typebox` (TypeBox schemas already *are* JSON Schema) both do:
+**Request and response schemas** are included too, when the configured validator supports it — all five validator adapters do: `@kickstart/zod` (via `zod-to-json-schema`), `@kickstart/typebox` (TypeBox schemas already *are* JSON Schema), `@kickstart/joi` (via `joi-to-json`), `@kickstart/yup` (via `@sodaru/yup-to-json-schema`), and `@kickstart/valibot` (via `@valibot/to-json-schema`):
 
 ```ts
 app.route({
@@ -1041,7 +1164,7 @@ app.route({
 })
 ```
 
-...produces a real `requestBody` and `200` response schema in the spec, plus one `in: query` parameter per property for a `query` schema. Joi, Yup, and Valibot don't have `toJsonSchema` wired up yet — routes using them still get paths, params, and auth, just without body/response schemas. Point a UI like [Scalar](https://scalar.com) or Swagger UI at the `json` endpoint for interactive docs.
+...produces a real `requestBody` and `200` response schema in the spec, plus one `in: query` parameter per property for a `query` schema — regardless of which of the five you use.
 
 ---
 
@@ -1059,6 +1182,36 @@ app.metrics('/metrics')   // Prometheus text format
 `/health` runs `db.healthcheck()` (if a `db` adapter is configured) plus any custom checks, and returns `200 { status: 'ok', checks: {...} }` or `503 { status: 'degraded', checks: {...} }` — point your load balancer or orchestrator's liveness probe at it.
 
 `/metrics` exposes per-route request counts, cumulative duration, and 5xx error counts as `api_kickstart_requests_total`, `api_kickstart_request_duration_ms_sum`, and `api_kickstart_errors_total`, labeled by `route`. Scrape it with Prometheus, or point any compatible collector at it.
+
+---
+
+## Scheduled tasks
+
+Recurring work that isn't tied to an incoming request or a queue message — cache warmups, cleanup sweeps, digest emails:
+
+```ts
+app.schedule('expire-sessions', { interval: '1h', runImmediately: true }, async () => {
+  await db.session.deleteMany({ where: { expiresAt: { lt: new Date() } } })
+})
+```
+
+This is `setInterval` under the hood, running in-process — not a cron-expression parser. What it does give you: errors in the handler are caught and logged (or routed to `onError`) instead of crashing the process, and every scheduled task is stopped automatically by `app.close()`.
+
+Running more than one instance? Pass a `lock` so only one instance actually runs the handler each tick, instead of all of them:
+
+```ts
+import { redisLock } from '@kickstart/redis'
+
+app.schedule(
+  'expire-sessions',
+  { interval: '1h', runImmediately: true, lock: redisLock({ url: env.REDIS_URL }) },
+  async () => {
+    await db.session.deleteMany({ where: { expiresAt: { lt: new Date() } } })
+  },
+)
+```
+
+Every instance's timer fires on the same cadence; whichever one wins the `SET NX PX` race for that tick runs the handler, the rest skip it silently. The lock's TTL defaults to the task's `interval` (override with `lockTtlMs`) and is released right after the handler finishes — including when it throws — so a slow or crashed instance can't hold the cluster hostage past one interval. Without `lock`, it's `setInterval`, once per instance, same as before.
 
 ---
 
@@ -1090,7 +1243,7 @@ expect(app.broker.published).toContainEqual(
 
 ## CLI
 
-Both commands read a config file — `api-kickstart.config.mjs` in the current directory by default, or `--config <path>`:
+Every command reads a config file — `api-kickstart.config.mjs` in the current directory by default, or `--config <path>`:
 
 ```ts
 // api-kickstart.config.mjs
@@ -1107,8 +1260,13 @@ export { envSchema }
 npx api-kickstart doctor                            # run the production checklist, exit 1 on any failure
 npx api-kickstart env:example                        # write .env.example from envSchema
 npx api-kickstart env:example --out .env.sample       # custom output path
+npx api-kickstart routes                             # print every registered route: method, path, auth, roles, scope
+npx api-kickstart openapi:generate                   # write the app's already-registered OpenAPI spec to openapi.json
+npx api-kickstart openapi:generate --path /docs.json --out ./dist/openapi.json
 npx api-kickstart <command> --config ./path/to/config.mjs
 ```
+
+`openapi:generate` doesn't rebuild the spec — it calls the route your app already registered via `app.openapi({ json: '...' })` and writes the response to disk, so `--path` must match whatever path you passed there.
 
 ---
 
@@ -1133,6 +1291,8 @@ Not yet automated — verify these yourself:
 
 - [ ] Response validation passes across your test suite (`response` schemas run automatically outside `NODE_ENV=production`)
 - [ ] Broker consumers are idempotent when an outbox is enabled
+- [ ] Passwords are stored via `hashPassword()`, never plain text (`doctor` has no way to inspect your database)
+- [ ] `csrf()` is in the middleware chain for any route reachable via cookie/session auth (bearer-token routes don't need it)
 
 ---
 
@@ -1183,17 +1343,25 @@ Tests run with `vitest` (`npm test`), linting with `eslint` (`npm run lint`), an
 - [x] Built-in middleware: `requestId`, `logger`, `rateLimit`, `bodyLimit`, `timeout`, `idempotency`, `helmet`, `compression`, `cache`, plus `rateLimit`/`timeout`/`idempotent` as route-level shorthands
 - [x] `gracefulShutdown(app)` — drain in-flight requests, then close framework/broker/db on `SIGTERM`
 - [x] `npx api-kickstart doctor` / `env:example` CLI
-- [x] Transactional outbox — `OutboxStore` + `startOutboxRelay`, `pgOutboxStore` reference implementation, wired into `rabbitmq()`/`kafka()`
+- [x] Transactional outbox — `OutboxStore` + `startOutboxRelay`; `pgOutboxStore`, `knexOutboxStore`, and `mongodbOutboxStore` implementations, wired into `rabbitmq()`/`kafka()`
 - [x] Runtime `scopeAudit` — detects a scoped route's handler never reading `ctx.scope` at all, and warns/throws
-- [x] OpenAPI request/response schema introspection for `@kickstart/zod` and `@kickstart/typebox`
+- [x] OpenAPI request/response schema introspection for every validator adapter: `@kickstart/zod`, `@kickstart/typebox`, `@kickstart/joi`, `@kickstart/yup`, `@kickstart/valibot`
 - [x] `app.health()` / `app.metrics()` — liveness checks and Prometheus-format metrics
 - [x] `multipart/form-data` parsing on every framework adapter, no extra dependency
 - [x] `@kickstart/pino` — structured logger, swaps in for the default console logger
+- [x] `hashPassword()` / `verifyPassword()` — scrypt-based, no extra dependency
+- [x] `@kickstart/redis` — Redis-backed `rateLimit`/`idempotency`/`cache`/`session` stores, for running behind a load balancer
+- [x] `@kickstart/s3` — `StorageAdapter` for S3-compatible object storage (AWS S3, MinIO, R2), exposed on `ctx.storage`
+- [x] `csrf()` — double-submit-cookie middleware for cookie/session-based auth
+- [x] `npx api-kickstart routes` / `openapi:generate` CLI commands
+- [x] `app.schedule()` — interval-based in-process recurring tasks, stopped by `app.close()`
+- [x] `signWebhook()` / `verifyWebhook()` — HMAC-SHA256 with timestamp tolerance, constant-time comparison
+- [x] `auditLog()` — structured "who did what" middleware, pluggable sink
+- [x] `openapi({ serve })` renders a real interactive docs page (Scalar), not just the raw JSON spec again
+- [x] `app.schedule({ lock })` — `redisLock` (`@kickstart/redis`) runs a scheduled task once per cluster instead of once per instance
 - [ ] `scopeAudit` can't verify a handler that reads `ctx.scope` but doesn't actually apply it to the query it runs — only "never touched it at all" is detectable without per-adapter query interception
-- [ ] OpenAPI schema introspection for Joi, Yup, Valibot (currently paths/params/auth work everywhere; body/response schemas are Zod- and TypeBox-only)
-- [ ] Outbox stores for adapters beyond `pg`
 
-Every adapter and built-in listed above as done is a real implementation, not a placeholder. Contributions welcome, especially on the three items still open.
+Every adapter and built-in listed above as done is a real implementation, not a placeholder. Contributions welcome, especially on the items still open.
 
 ---
 

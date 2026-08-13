@@ -15,7 +15,7 @@ const auth = jwt({
     return user ? { id: user.id, role: user.role, username: user.username } : null
   },
   verifyCredentials: async ({ username, password }) => {
-    const user = findUserByCredentials(username, password)
+    const user = await findUserByCredentials(username, password)
     return user ? { id: user.id, role: user.role, username: user.username } : null
   },
 })
@@ -73,6 +73,7 @@ app.metrics()
 app.openapi({
   info: { title: 'Blog API', version: '1.0.0', description: 'api-kickstart reference example' },
   json: '/openapi.json',
+  serve: '/docs',
 })
 
 const port = Number(process.env.PORT ?? 3000)

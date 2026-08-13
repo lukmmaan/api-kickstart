@@ -15,11 +15,13 @@
   },
   "peerDependencies": {
     "api-kickstart": "^0.1.0",
-    "valibot": "^0.42.0"
+    "valibot": "^1.4.0",
+    "@valibot/to-json-schema": "^1.4.0"
   },
   "devDependencies": {
     "api-kickstart": "^0.1.0",
-    "valibot": "^0.42.0",
+    "valibot": "^1.4.0",
+    "@valibot/to-json-schema": "^1.4.0",
     "typescript": "^5.5.4",
     "@types/node": "^22.5.0"
   }

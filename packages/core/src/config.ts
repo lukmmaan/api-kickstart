@@ -1,13 +1,14 @@
 import { resolveCorsOptions, type CorsConfig, type CorsOptions } from './cors.js'
 import { defaultLogger } from './logger.js'
 import type { PermissionMap, RoleHierarchy, ScopeMap } from './authorize.js'
-import type { AuthStrategy, BrokerAdapter, DbAdapter, FrameworkAdapter, Logger, Middleware, Validator } from './types.js'
+import type { AuthStrategy, BrokerAdapter, DbAdapter, FrameworkAdapter, Logger, Middleware, StorageAdapter, Validator } from './types.js'
 
 export interface CreateAppOptions {
   framework: FrameworkAdapter
   validator?: Validator
   db?: DbAdapter
   broker?: BrokerAdapter
+  storage?: StorageAdapter
   auth?: AuthStrategy | AuthStrategy[]
   cors?: CorsConfig
   middleware?: Middleware[]

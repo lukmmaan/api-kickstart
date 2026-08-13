@@ -1,5 +1,8 @@
 import type { Schema } from 'joi'
+import * as joiToJsonModule from 'joi-to-json'
 import { SchemaValidationError, type Validator } from 'api-kickstart'
+
+const joiToJson = joiToJsonModule.default as unknown as (schema: Schema) => unknown
 
 export function joi(): Validator {
   return {
@@ -14,6 +17,9 @@ export function joi(): Validator {
         throw new SchemaValidationError(issues)
       }
       return result.value
+    },
+    toJsonSchema(schema) {
+      return joiToJson(schema as Schema)
     },
   }
 }

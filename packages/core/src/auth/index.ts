@@ -13,3 +13,4 @@ export {
   type OidcTokenResponse,
 } from './oidc.js'
 export { memoryRefreshStore, type RefreshStore, type RefreshRecord } from './refresh-store.js'
+export { hashPassword, verifyPassword, type PasswordHashOptions } from './password.js'

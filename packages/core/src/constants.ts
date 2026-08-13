@@ -23,6 +23,7 @@ export const DEV_CORS_ALLOWED_HEADERS = ['content-type', 'authorization']
 export const DEFAULT_RESOURCE_ACTIONS = ['list', 'get', 'create', 'update', 'delete'] as const
 
 export const OPENAPI_VERSION = '3.0.3'
+export const SCALAR_CDN_URL = 'https://cdn.jsdelivr.net/npm/@scalar/api-reference'
 export const OPENAPI_RESPONSE_DESCRIPTIONS: Record<string, string> = {
   '200': 'Success',
   '400': 'Validation error',
