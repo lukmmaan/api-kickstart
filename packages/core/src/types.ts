@@ -44,6 +44,14 @@ export interface ResponseBag {
   body: unknown
 }
 
+export interface UploadedFile {
+  fieldName: string
+  filename: string
+  contentType: string
+  data: Buffer
+  size: number
+}
+
 export interface Context<TUser = AuthenticatedUser> {
   method: string
   path: string
@@ -52,6 +60,7 @@ export interface Context<TUser = AuthenticatedUser> {
   query: unknown
   params: unknown
   headers: Record<string, string | string[] | undefined>
+  files: Record<string, UploadedFile[]>
   scope: ScopeFilter
   db: unknown
   broker: BrokerAdapter | null
@@ -80,6 +89,7 @@ export interface ValidationIssue {
 export interface Validator {
   name: string
   parse(schema: unknown, value: unknown, path: string): unknown
+  toJsonSchema?(schema: unknown): unknown
 }
 
 export interface DbAdapter {

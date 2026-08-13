@@ -6,10 +6,14 @@ import { resolveAppConfig, type CreateAppOptions } from './config.js'
 import { runWithContext } from './context.js'
 import { Forbidden, NotFound, SchemaValidationError, Unauthorized, ValidationError, formatError } from './errors.js'
 import { GroupBuilder, type GroupOptions } from './group.js'
+import { runHealthChecks, type HealthCheckOptions } from './health.js'
+import { MetricsCollector } from './metrics.js'
 import { runMiddlewareChain } from './middleware.js'
+import { isMultipart, parseMultipart } from './multipart.js'
 import { buildOpenApiSpec, type OpenApiOptions } from './openapi.js'
 import { registerResource, type ResourceOptions } from './resource.js'
 import { compilePath, type CompiledRoute } from './router.js'
+import { auditedScope, ScopeAuditError } from './scopeAudit.js'
 import type { JwtAuthStrategy } from './auth/jwt.js'
 import type {
   AuthenticatedUser,
@@ -23,6 +27,7 @@ import type {
   RawRequest,
   RequestLike,
   RouteConfig,
+  UploadedFile,
 } from './types.js'
 
 export * from './types.js'
@@ -49,6 +54,10 @@ export { GroupBuilder, type GroupOptions } from './group.js'
 export { gracefulShutdown, type GracefulShutdownOptions } from './lifecycle.js'
 export { runDoctorChecks, type DoctorCheck } from './doctor.js'
 export { startOutboxRelay, type OutboxEntry, type OutboxRelayOptions, type OutboxStore } from './outbox.js'
+export { type HealthCheckOptions, type HealthCheckResult } from './health.js'
+export { MetricsCollector, type RouteMetrics } from './metrics.js'
+export { ScopeAuditError } from './scopeAudit.js'
+export { isMultipart, parseMultipart, type ParsedMultipart } from './multipart.js'
 
 export interface AuthRoutesConfig {
   login?: string
@@ -86,9 +95,11 @@ export class App {
   private roleHierarchy: RoleHierarchy
   private permissionMap: PermissionMap
   private scopeMap: ScopeMap
+  private scopeAudit: 'off' | 'warn' | 'throw'
   private testUserOverride: AuthenticatedUser | null = null
   private draining = false
   private inFlightRequests = 0
+  private metricsCollector: MetricsCollector | null = null
 
   constructor(private options: CreateAppOptions) {
     const resolved = resolveAppConfig(options)
@@ -98,6 +109,7 @@ export class App {
     this.roleHierarchy = resolved.roleHierarchy
     this.permissionMap = resolved.permissionMap
     this.scopeMap = resolved.scopeMap
+    this.scopeAudit = resolved.scopeAudit
     this.options.framework.onRequest((req, raw) => this.dispatch(req, raw))
   }
 
@@ -142,8 +154,39 @@ export class App {
     return {
       routes: this.routes(),
       scopeMap: this.scopeMap,
-      scopeAudit: this.options.scopeAudit ?? 'off',
+      scopeAudit: this.scopeAudit,
     }
+  }
+
+  health(options: HealthCheckOptions = {}): this {
+    const path = options.path ?? '/health'
+    const customChecks = options.checks ?? {}
+    this.route({
+      method: 'GET',
+      path,
+      auth: false,
+      handler: async (ctx) => {
+        const result = await runHealthChecks(this.options.db?.healthcheck?.bind(this.options.db), customChecks)
+        ctx.response.status = result.status === 'ok' ? 200 : 503
+        return result
+      },
+    })
+    return this
+  }
+
+  metrics(path = '/metrics'): this {
+    this.metricsCollector = this.metricsCollector ?? new MetricsCollector()
+    const collector = this.metricsCollector
+    this.route({
+      method: 'GET',
+      path,
+      auth: false,
+      handler: async (ctx) => {
+        ctx.response.headers['content-type'] = 'text/plain; version=0.0.4; charset=utf-8'
+        return Buffer.from(collector.toPrometheus())
+      },
+    })
+    return this
   }
 
   useAuthRoutes(config: AuthRoutesConfig): this {
@@ -229,6 +272,7 @@ export class App {
           query: undefined,
           params: undefined,
           headers: {},
+          files: {},
           scope: {},
           db: this.options.db?.client ?? null,
           broker: this.options.broker ?? null,
@@ -247,7 +291,7 @@ export class App {
   }
 
   openapi(options: OpenApiOptions): this {
-    const spec = buildOpenApiSpec(this.routes(), options)
+    const spec = buildOpenApiSpec(this.routes(), options, this.options.validator)
     const paths = [options.json, options.serve].filter((p): p is string => Boolean(p))
     for (const path of paths) {
       this.route({ method: 'GET', path, auth: false, handler: async () => spec })
@@ -360,6 +404,8 @@ export class App {
     const includeStack = process.env.NODE_ENV !== 'production'
     const originHeader = req.headers.origin
     const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader
+    const dispatchStart = Date.now()
+    let routeLabel = 'unmatched'
 
     if (this.draining) {
       return {
@@ -381,6 +427,7 @@ export class App {
       }
       const { compiled, params } = matched
       const config = compiled.config
+      routeLabel = `${config.method} ${config.path}`
 
       const user = await this.authenticate(config, req, raw)
 
@@ -394,14 +441,26 @@ export class App {
       }
 
       let scope = {}
+      let scopeAccessed = false
       if (config.scope) {
         if (!user) throw new Unauthorized()
-        scope = await resolveScope(user, config.scope, this.scopeMap)
+        const resolvedScope = await resolveScope(user, config.scope, this.scopeMap)
+        scope = this.scopeAudit !== 'off' ? auditedScope(resolvedScope, () => { scopeAccessed = true }) : resolvedScope
+      }
+
+      const contentTypeHeader = req.headers['content-type']
+      const contentType = Array.isArray(contentTypeHeader) ? contentTypeHeader[0] : contentTypeHeader
+      let rawBody: unknown = req.rawBody
+      let files: Record<string, UploadedFile[]> = {}
+      if (isMultipart(contentType) && Buffer.isBuffer(req.rawBody)) {
+        const multipart = parseMultipart(req.rawBody, contentType as string)
+        rawBody = multipart.fields
+        files = multipart.files
       }
 
       const validatedParams = config.params ? this.validate(config.params, params, 'params') : params
       const validatedQuery = this.validate(config.query, req.rawQuery, 'query')
-      const validatedBody = this.validate(config.body, req.rawBody, 'body')
+      const validatedBody = this.validate(config.body, rawBody, 'body')
       const validatedHeaders = config.headers ? this.validate(config.headers, req.headers, 'headers') : req.headers
 
       const logger = this.logger.child({ requestId })
@@ -414,6 +473,7 @@ export class App {
         query: validatedQuery,
         params: validatedParams,
         headers: validatedHeaders as Record<string, string | string[] | undefined>,
+        files,
         scope,
         db: this.options.db?.client ?? null,
         broker: this.options.broker ?? null,
@@ -443,6 +503,14 @@ export class App {
       }
       await runMiddlewareChain(middlewareChain, ctx, runHandler)
 
+      if (config.scope && this.scopeAudit !== 'off' && !scopeAccessed) {
+        const message = `Route ${config.method} ${config.path} declares scope: "${config.scope}" but the handler never read ctx.scope`
+        if (this.scopeAudit === 'throw') {
+          throw new ScopeAuditError(message)
+        }
+        this.logger.warn({ requestId, route: routeLabel, message, stack: new Error(message).stack })
+      }
+
       if (config.response && process.env.NODE_ENV !== 'production') {
         this.validate(config.response, ctx.response.body, 'response')
       }
@@ -450,12 +518,14 @@ export class App {
       const headers = this.corsOptions ? buildCorsHeaders(this.corsOptions, origin) : {}
       Object.assign(headers, ctx.response.headers)
       headers['x-request-id'] = requestId
+      this.metricsCollector?.record(routeLabel, Date.now() - dispatchStart, ctx.response.status)
       return { status: ctx.response.status, body: ctx.response.body, headers }
     } catch (err) {
       const formatted = formatError(err, requestId, includeStack)
       const headers = this.corsOptions ? buildCorsHeaders(this.corsOptions, origin) : {}
       headers['x-request-id'] = requestId
       this.logger.error({ requestId, err })
+      this.metricsCollector?.record(routeLabel, Date.now() - dispatchStart, formatted.status)
       return { status: formatted.status, body: formatted.body, headers }
     } finally {
       this.inFlightRequests -= 1

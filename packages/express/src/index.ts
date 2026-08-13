@@ -1,6 +1,7 @@
 import expressLib, { type Express, type Request, type RequestHandler, type Response } from 'express'
 import type { DispatchHandler, FrameworkAdapter, RequestLike } from 'api-kickstart'
 import { parseCookies } from './cookies.js'
+import { captureMultipartBody } from './multipart.js'
 
 export { adapt } from './adapt.js'
 
@@ -13,6 +14,7 @@ export function express(options: ExpressAdapterOptions = {}): FrameworkAdapter {
   let dispatchHandler: DispatchHandler | null = null
   let server: ReturnType<Express['listen']> | null = null
 
+  app.use(captureMultipartBody)
   app.use(expressLib.json())
 
   app.use(async (req: Request, res: Response) => {

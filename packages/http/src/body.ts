@@ -9,17 +9,21 @@ export function readBody(req: IncomingMessage): Promise<unknown> {
         resolve(undefined)
         return
       }
-      const raw = Buffer.concat(chunks).toString('utf8')
+      const buffer = Buffer.concat(chunks)
       const contentType = req.headers['content-type'] ?? ''
+      if (contentType.includes('multipart/form-data')) {
+        resolve(buffer)
+        return
+      }
       if (contentType.includes('application/json')) {
         try {
-          resolve(JSON.parse(raw))
+          resolve(JSON.parse(buffer.toString('utf8')))
         } catch (err) {
           reject(err)
         }
         return
       }
-      resolve(raw)
+      resolve(buffer.toString('utf8'))
     })
     req.on('error', reject)
   })

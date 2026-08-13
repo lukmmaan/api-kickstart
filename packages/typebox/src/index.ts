@@ -16,5 +16,8 @@ export function typebox(): Validator {
       }))
       throw new SchemaValidationError(issues)
     },
+    toJsonSchema(schema) {
+      return schema
+    },
   }
 }

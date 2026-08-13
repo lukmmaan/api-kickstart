@@ -12,6 +12,10 @@ async function readRawBody(c: Context, headers: Record<string, string | string[]
   if (c.req.method === 'GET' || c.req.method === 'HEAD') return undefined
   const contentType = headers['content-type']
   const contentTypeValue = Array.isArray(contentType) ? contentType[0] : contentType
+  if (contentTypeValue?.includes('multipart/form-data')) {
+    const arrayBuffer = await c.req.arrayBuffer().catch(() => undefined)
+    return arrayBuffer ? Buffer.from(arrayBuffer) : undefined
+  }
   if (contentTypeValue?.includes('application/json')) {
     return c.req.json().catch(() => undefined)
   }

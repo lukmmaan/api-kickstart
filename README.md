@@ -3,6 +3,7 @@
 > Stop rewriting the same 800 lines on every new project. Auth, authorization, validation, CORS, error handling, database, and message broker — wired together with sane defaults, swappable everywhere.
 
 [![npm version](https://img.shields.io/npm/v/api-kickstart.svg)](https://www.npmjs.com/package/api-kickstart)
+[![CI](https://github.com/lukmmaan/api-kickstart/actions/workflows/ci.yml/badge.svg)](https://github.com/lukmmaan/api-kickstart/actions/workflows/ci.yml)
 [![bundle size](https://img.shields.io/bundlephobia/minzip/api-kickstart)](https://bundlephobia.com/package/api-kickstart)
 [![license](https://img.shields.io/npm/l/api-kickstart.svg)](./LICENSE)
 [![types](https://img.shields.io/npm/types/api-kickstart.svg)](https://www.typescriptlang.org/)
@@ -47,6 +48,7 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
 - [Authorization](#authorization)
 - [Scope: row-level filtering](#scope-row-level-filtering)
 - [Validation](#validation)
+- [File uploads](#file-uploads)
 - [Routing](#routing)
 - [CORS](#cors)
 - [Middleware](#middleware)
@@ -57,6 +59,7 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
 - [Framework adapters](#framework-adapters)
 - [Configuration](#configuration)
 - [OpenAPI generation](#openapi-generation)
+- [Health & metrics](#health--metrics)
 - [Testing](#testing)
 - [CLI](#cli)
 - [Production checklist](#production-checklist)
@@ -84,6 +87,9 @@ npm install @kickstart/rabbitmq     # or kafka, redis-stream, sqs, nats, bullmq
 
 # validation (pick one)
 npm install @kickstart/zod          # or joi, yup, valibot, typebox
+
+# structured logging (optional)
+npm install @kickstart/pino
 ```
 
 The core has no dependencies and pulls in nothing you didn't ask for.
@@ -440,7 +446,13 @@ If a role isn't defined for a resource, access is denied. There is no implicit "
 createApp({ scopeAudit: 'warn' })   // 'off' | 'warn' | 'throw'
 ```
 
-`app.diagnostics().scopeAudit` exposes the configured value, and `npx api-kickstart doctor` fails the `scope-audit-enabled` check when it's left at `'off'` — a nudge to turn it on before shipping. Runtime interception that actually logs (or throws on) a query that bypassed scope, with a stack trace pointing at the offending line, is not implemented yet; see the [Roadmap](#roadmap).
+When a route declares `scope`, `ctx.scope` is handed to the handler wrapped so api-kickstart knows whether it was ever actually read. If the handler finishes without touching `ctx.scope` at all — the strongest available signal that the query it ran didn't apply the filter — `'warn'` logs it (with a stack trace) and `'throw'` fails the request outright instead of returning data that was never scoped:
+
+```
+{ requestId: '...', route: 'GET /orders', message: 'Route GET /orders declares scope: "order" but the handler never read ctx.scope', stack: '...' }
+```
+
+This catches the "forgot to spread `ctx.scope` into the query" class of bug. It can't catch a handler that reads `ctx.scope` and then ignores it, since there's no way to verify what a raw database call downstream actually did with the value — that would need per-adapter query interception, which isn't implemented. `app.diagnostics().scopeAudit` exposes the configured value, and `npx api-kickstart doctor` fails the `scope-audit-enabled` check when it's left at `'off'`.
 
 ### Hierarchies
 
@@ -516,6 +528,35 @@ Failures produce a consistent shape:
   }
 }
 ```
+
+---
+
+## File uploads
+
+`multipart/form-data` requests are parsed automatically, on every framework adapter — no extra dependency, no per-route setup:
+
+```ts
+app.route({
+  method: 'POST',
+  path: '/avatar',
+  auth: true,
+  handler: async (ctx) => {
+    ctx.body           // the non-file fields, as strings
+    ctx.files.avatar    // UploadedFile[] for a field named "avatar"
+
+    const [file] = ctx.files.avatar
+    file.filename       // "photo.png"
+    file.contentType    // "image/png"
+    file.data            // Buffer
+    file.size
+
+    await s3.putObject({ Key: file.filename, Body: file.data, ContentType: file.contentType })
+    return { uploaded: file.filename }
+  },
+})
+```
+
+The non-file fields land in `ctx.body` exactly like a JSON request, so a `body` validator schema still applies to them. Files are buffered fully in memory before the handler runs — fine for avatars and documents; put `bodyLimit()` in front of the route if you need to cap upload size, and stream large files (video, bulk data) through a signed upload URL instead rather than through this path.
 
 ---
 
@@ -646,7 +687,7 @@ middleware: [adapt(someExpressMiddleware)]
 Imported from `api-kickstart/middleware`, all real implementations — none of these are stubs:
 
 ```ts
-import { requestId, logger, rateLimit, compression, helmet, bodyLimit, timeout, idempotency } from 'api-kickstart/middleware'
+import { requestId, logger, rateLimit, compression, helmet, bodyLimit, timeout, idempotency, cache } from 'api-kickstart/middleware'
 
 createApp({
   middleware: [
@@ -656,6 +697,14 @@ createApp({
     compression({ threshold: 1024 }),               // gzip responses over the threshold, via node:zlib
     bodyLimit({ maxBytes: 1_000_000 }),             // 413 PayloadTooLarge over the limit
   ],
+})
+
+app.route({
+  method: 'GET',
+  path: '/catalog',
+  auth: false,
+  middleware: [cache({ ttlMs: 30_000 })],   // GET-only response cache, sets x-cache: HIT/MISS
+  handler: async (ctx) => { /* ... */ },
 })
 ```
 
@@ -672,7 +721,7 @@ app.route({
 })
 ```
 
-`rateLimit` and `idempotency` both accept a `store` option (`RateLimitStore` / `IdempotencyStore`) — the in-memory default is fine for a single instance; pass a Redis-backed store for multi-instance deployments.
+`rateLimit`, `idempotency`, and `cache` each accept a `store` option (`RateLimitStore` / `IdempotencyStore` / `CacheStore`) — the in-memory default is fine for a single instance; pass a Redis-backed store for multi-instance deployments.
 
 ---
 
@@ -682,10 +731,13 @@ Everything a handler needs, in one object:
 
 ```ts
 handler: async (ctx) => {
+  ctx.method        // 'GET', 'POST', ...
+  ctx.path          // the matched route's raw path, e.g. '/orders/:id'
   ctx.user          // authenticated user, typed
-  ctx.body          // validated body
+  ctx.body          // validated body (or multipart's non-file fields)
   ctx.query         // validated query
   ctx.params        // validated params
+  ctx.files         // UploadedFile[] per field name, for multipart requests
   ctx.scope         // row-level filter for this user
   ctx.db            // database client
   ctx.broker        // message broker
@@ -693,7 +745,16 @@ handler: async (ctx) => {
   ctx.requestId
   ctx.raw.req       // underlying framework request
   ctx.raw.res
+  ctx.response       // { status, headers, body } — mutate directly, or just return your result
 }
+```
+
+`ctx.logger` defaults to a thin `console`-based logger. Swap it for structured, production-grade logging with `@kickstart/pino`:
+
+```ts
+import { pinoLogger } from '@kickstart/pino'
+
+createApp({ logger: pinoLogger({ pinoOptions: { level: 'info' } }) })
 ```
 
 ### Anywhere else in your code
@@ -966,7 +1027,38 @@ app.openapi({
 })
 ```
 
-Paths, parameters, path-parameter names, auth requirements (`security`), tags, and summaries are derived from what you already declared on each route — no decorators, no JSDoc comments, no second source of truth that drifts. Request/response *schema* introspection is validator-specific and not generated yet (see the [Roadmap](#roadmap)); point a UI like [Scalar](https://scalar.com) or Swagger UI at the `json` endpoint for interactive docs.
+Paths, parameters, path-parameter names, auth requirements (`security`), tags, and summaries are derived from what you already declared on each route — no decorators, no JSDoc comments, no second source of truth that drifts.
+
+**Request and response schemas** are included too, when the configured validator supports it — `@kickstart/zod` (via `zod-to-json-schema`) and `@kickstart/typebox` (TypeBox schemas already *are* JSON Schema) both do:
+
+```ts
+app.route({
+  method: 'POST',
+  path: '/orders',
+  body: z.object({ sku: z.string(), qty: z.number().int().positive() }),
+  response: z.object({ id: z.string(), total: z.number() }),
+  handler: async (ctx) => { /* ... */ },
+})
+```
+
+...produces a real `requestBody` and `200` response schema in the spec, plus one `in: query` parameter per property for a `query` schema. Joi, Yup, and Valibot don't have `toJsonSchema` wired up yet — routes using them still get paths, params, and auth, just without body/response schemas. Point a UI like [Scalar](https://scalar.com) or Swagger UI at the `json` endpoint for interactive docs.
+
+---
+
+## Health & metrics
+
+```ts
+app.health({
+  path: '/health',                                    // default
+  checks: { redis: async () => redis.ping().then(() => true).catch(() => false) },
+})
+
+app.metrics('/metrics')   // Prometheus text format
+```
+
+`/health` runs `db.healthcheck()` (if a `db` adapter is configured) plus any custom checks, and returns `200 { status: 'ok', checks: {...} }` or `503 { status: 'degraded', checks: {...} }` — point your load balancer or orchestrator's liveness probe at it.
+
+`/metrics` exposes per-route request counts, cumulative duration, and 5xx error counts as `api_kickstart_requests_total`, `api_kickstart_request_duration_ms_sum`, and `api_kickstart_errors_total`, labeled by `route`. Scrape it with Prometheus, or point any compatible collector at it.
 
 ---
 
@@ -1072,8 +1164,11 @@ This repository is a workspace of independent packages:
 
 - `packages/core` — the `api-kickstart` package itself (routing, context, auth strategies, authorization, CORS, errors, env, testing, OpenAPI). Split into focused modules (`router.ts`, `group.ts`, `middleware.ts`, `authorize.ts`, `cors.ts`, `resource.ts`, `openapi.ts`, `auth/*`) rather than one file.
 - `packages/<name>` — one package per adapter, published as `@kickstart/<name>`. Each wraps its underlying library's real client and, where it has more than one concern, splits into `index.ts` (the factory), `types.ts` (options), and `errors.ts` (error-code normalization to `AppError` subclasses).
+- `examples/blog-api` — a runnable reference app (JWT auth, row-level scope, `resource()`, in-memory `DbAdapter`, zero external services) — see [its README](./examples/blog-api/README.md).
 
 Every adapter package is a working implementation, not a placeholder — see the [Roadmap](#roadmap) for what's still open (OIDC and the CLI).
+
+Tests run with `vitest` (`npm test`), linting with `eslint` (`npm run lint`), and CI runs both plus `build`/`typecheck` on every push and PR — see [CONTRIBUTING.md](./CONTRIBUTING.md) for the full workflow, including how to add a new adapter and how changesets/versioning work.
 
 ---
 
@@ -1085,12 +1180,17 @@ Every adapter package is a working implementation, not a placeholder — see the
 - [x] Database adapters: `pg`, Prisma, Drizzle, Mongoose, Knex, TypeORM, Sequelize, MongoDB
 - [x] Broker adapters: in-memory, RabbitMQ, Kafka, Redis Streams, BullMQ, SQS, NATS, MQTT, Pub/Sub
 - [x] Validator adapters: Zod, Joi, Yup, Valibot, TypeBox
-- [x] Built-in middleware: `requestId`, `logger`, `rateLimit`, `bodyLimit`, `timeout`, `idempotency`, `helmet`, `compression`, plus `rateLimit`/`timeout`/`idempotent` as route-level shorthands
+- [x] Built-in middleware: `requestId`, `logger`, `rateLimit`, `bodyLimit`, `timeout`, `idempotency`, `helmet`, `compression`, `cache`, plus `rateLimit`/`timeout`/`idempotent` as route-level shorthands
 - [x] `gracefulShutdown(app)` — drain in-flight requests, then close framework/broker/db on `SIGTERM`
 - [x] `npx api-kickstart doctor` / `env:example` CLI
 - [x] Transactional outbox — `OutboxStore` + `startOutboxRelay`, `pgOutboxStore` reference implementation, wired into `rabbitmq()`/`kafka()`
-- [ ] Runtime `scopeAudit` interception (logging/throwing on a query that bypassed scope) — currently just a config flag `doctor` checks isn't `'off'`
-- [ ] OpenAPI request/response schema introspection (currently paths, params, auth, tags only)
+- [x] Runtime `scopeAudit` — detects a scoped route's handler never reading `ctx.scope` at all, and warns/throws
+- [x] OpenAPI request/response schema introspection for `@kickstart/zod` and `@kickstart/typebox`
+- [x] `app.health()` / `app.metrics()` — liveness checks and Prometheus-format metrics
+- [x] `multipart/form-data` parsing on every framework adapter, no extra dependency
+- [x] `@kickstart/pino` — structured logger, swaps in for the default console logger
+- [ ] `scopeAudit` can't verify a handler that reads `ctx.scope` but doesn't actually apply it to the query it runs — only "never touched it at all" is detectable without per-adapter query interception
+- [ ] OpenAPI schema introspection for Joi, Yup, Valibot (currently paths/params/auth work everywhere; body/response schemas are Zod- and TypeBox-only)
 - [ ] Outbox stores for adapters beyond `pg`
 
 Every adapter and built-in listed above as done is a real implementation, not a placeholder. Contributions welcome, especially on the three items still open.

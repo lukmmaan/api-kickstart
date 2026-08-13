@@ -37,7 +37,9 @@ export function startOutboxRelay(
         await publish(entry.topic, entry.message)
         await store.markPublished(entry.id)
       }
-    } catch {}
+    } catch (err) {
+      void err
+    }
     if (!stopped) timer = setTimeout(tick, intervalMs)
   }
 

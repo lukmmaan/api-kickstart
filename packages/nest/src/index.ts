@@ -1,8 +1,10 @@
 import 'reflect-metadata'
+import expressLib from 'express'
 import { NestFactory } from '@nestjs/core'
 import type { NestExpressApplication } from '@nestjs/platform-express'
 import type { FrameworkAdapter } from 'api-kickstart'
 import { KickstartModule, dispatchRef } from './controller.js'
+import { captureMultipartBody } from './multipart.js'
 
 export function nest(): FrameworkAdapter {
   let app: NestExpressApplication | null = null
@@ -16,7 +18,10 @@ export function nest(): FrameworkAdapter {
 
     listen(port, cb) {
       void (async () => {
-        app = await NestFactory.create<NestExpressApplication>(KickstartModule, { logger: false })
+        app = await NestFactory.create<NestExpressApplication>(KickstartModule, { logger: false, bodyParser: false })
+        app.use(captureMultipartBody)
+        app.use(expressLib.json())
+        app.use(expressLib.urlencoded({ extended: true }))
         await app.listen(port)
         cb?.()
       })()

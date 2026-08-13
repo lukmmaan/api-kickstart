@@ -10,6 +10,10 @@ export function fastify(options: FastifyAdapterOptions = {}): FrameworkAdapter {
   const app = options.app ?? Fastify()
   let dispatchHandler: DispatchHandler | null = null
 
+  app.addContentTypeParser(/^multipart\/form-data/, { parseAs: 'buffer' }, (_req, body, done) => {
+    done(null, body)
+  })
+
   app.all('*', async (req: FastifyRequest, reply: FastifyReply) => {
     if (!dispatchHandler) {
       reply.status(503).send({ error: { code: 'NOT_READY', message: 'api-kickstart handler not registered' } })
