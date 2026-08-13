@@ -1,0 +1,17 @@
+{
+  "name": "api-kickstart-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=api-kickstart && npm run build --workspaces --if-present",
+    "typecheck": "npm run build --workspace=api-kickstart && npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/node": "^22.5.0"
+  }
+}
