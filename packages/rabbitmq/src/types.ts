@@ -3,4 +3,5 @@ export interface RabbitmqOptions {
   exchange?: string
   exchangeType?: 'topic' | 'direct' | 'fanout'
   outbox?: boolean
+  attemptHeader?: string
 }

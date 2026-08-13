@@ -10,13 +10,15 @@ type StreamReadResult = [stream: string, entries: StreamEntries][] | null
 
 export function redisStream(options: RedisStreamOptions = {}): BrokerAdapter {
   const url = options.url ?? DEFAULT_REDIS_URL
+  const payloadField = options.payloadField ?? PAYLOAD_FIELD
+  const blockTimeoutMs = options.blockTimeoutMs ?? BLOCK_TIMEOUT_MS
   const publisher = new Redis(url)
   const consumerClient = new Redis(url)
   const activeConsumers: { stop: boolean }[] = []
 
   return {
     async publish(topic, message) {
-      await publisher.xadd(topic, '*', PAYLOAD_FIELD, JSON.stringify(message))
+      await publisher.xadd(topic, '*', payloadField, JSON.stringify(message))
     },
 
     consume(consumeOptions: BrokerConsumeOptions) {
@@ -40,7 +42,7 @@ export function redisStream(options: RedisStreamOptions = {}): BrokerAdapter {
             'COUNT',
             consumeOptions.concurrency ?? DEFAULT_CONCURRENCY,
             'BLOCK',
-            BLOCK_TIMEOUT_MS,
+            blockTimeoutMs,
             'STREAMS',
             consumeOptions.topic,
             '>',
@@ -50,7 +52,7 @@ export function redisStream(options: RedisStreamOptions = {}): BrokerAdapter {
 
           for (const [, entries] of response) {
             for (const [id, fields] of entries) {
-              const payloadIndex = fields.indexOf(PAYLOAD_FIELD)
+              const payloadIndex = fields.indexOf(payloadField)
               const raw = payloadIndex >= 0 ? fields[payloadIndex + 1] : undefined
               const message = raw ? JSON.parse(raw) : null
               try {

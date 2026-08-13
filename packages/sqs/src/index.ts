@@ -7,6 +7,7 @@ export type { SqsOptions }
 
 export function sqs(options: SqsOptions = {}): BrokerAdapter {
   const client = new SQSClient({ region: options.region, ...options.clientConfig })
+  const waitTimeSeconds = options.waitTimeSeconds ?? WAIT_TIME_SECONDS
   const stopFlags: { stop: boolean }[] = []
 
   return {
@@ -24,7 +25,7 @@ export function sqs(options: SqsOptions = {}): BrokerAdapter {
             new ReceiveMessageCommand({
               QueueUrl: consumeOptions.topic,
               MaxNumberOfMessages: Math.min(consumeOptions.concurrency ?? DEFAULT_CONCURRENCY, MAX_MESSAGES_PER_POLL),
-              WaitTimeSeconds: WAIT_TIME_SECONDS,
+              WaitTimeSeconds: waitTimeSeconds,
               MessageSystemAttributeNames: ['ApproximateReceiveCount'],
             }),
           )

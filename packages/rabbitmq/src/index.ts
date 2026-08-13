@@ -11,6 +11,7 @@ type AmqpChannel = Awaited<ReturnType<AmqpConnection['createChannel']>>
 export function rabbitmq(options: RabbitmqOptions): BrokerAdapter {
   const exchange = options.exchange ?? ''
   const exchangeType = options.exchangeType ?? DEFAULT_EXCHANGE_TYPE
+  const attemptHeader = options.attemptHeader ?? ATTEMPT_HEADER
 
   let connectionPromise: Promise<AmqpConnection> | null = null
   let channelPromise: Promise<AmqpChannel> | null = null
@@ -54,7 +55,7 @@ export function rabbitmq(options: RabbitmqOptions): BrokerAdapter {
           void (async () => {
             try {
               const message = JSON.parse(msg.content.toString('utf8'))
-              const attempt = (msg.properties.headers?.[ATTEMPT_HEADER] as number | undefined) ?? 1
+              const attempt = (msg.properties.headers?.[attemptHeader] as number | undefined) ?? 1
               await consumeOptions.onMessage(message, { topic: consumeOptions.topic, attempt })
               channel.ack(msg)
             } catch {

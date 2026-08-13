@@ -2,7 +2,11 @@ export const TTL_UNIT_SECONDS = { s: 1, m: 60, h: 3600, d: 86400 } as const
 
 export const TTL_UNIT_MILLISECONDS = { s: 1000, m: 60000, h: 3600000, d: 86400000 } as const
 
-export const DEFAULT_JWT_ALGORITHM = 'HS256' as const
+export const SYMMETRIC_JWT_ALGORITHMS = ['HS256', 'HS384', 'HS512'] as const
+export const ASYMMETRIC_JWT_ALGORITHMS = ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'] as const
+export type JwtAlgorithm = (typeof SYMMETRIC_JWT_ALGORITHMS)[number] | (typeof ASYMMETRIC_JWT_ALGORITHMS)[number]
+
+export const DEFAULT_JWT_ALGORITHM: JwtAlgorithm = 'HS256'
 export const DEFAULT_JWT_ACCESS_TTL = '15m'
 export const DEFAULT_JWT_REFRESH_TTL = '30d'
 export const DEFAULT_JWT_TOKEN_SOURCES: string[] = ['header:authorization']

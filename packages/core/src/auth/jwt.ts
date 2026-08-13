@@ -1,13 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import { SignJWT, jwtVerify, type JWTPayload } from 'jose'
-import { DEFAULT_JWT_ACCESS_TTL, DEFAULT_JWT_ALGORITHM, DEFAULT_JWT_REFRESH_TTL, DEFAULT_JWT_TOKEN_SOURCES, TTL_UNIT_SECONDS } from '../constants.js'
+import { DEFAULT_JWT_ACCESS_TTL, DEFAULT_JWT_ALGORITHM, DEFAULT_JWT_REFRESH_TTL, DEFAULT_JWT_TOKEN_SOURCES, TTL_UNIT_SECONDS, type JwtAlgorithm } from '../constants.js'
 import { Unauthorized } from '../errors.js'
 import type { AuthenticateArgs, AuthenticatedUser, AuthStrategy } from '../types.js'
+import { resolveJwtKeys, type JwtKeyMaterial } from './jwt-keys.js'
 import { memoryRefreshStore, type RefreshStore } from './refresh-store.js'
 
 export interface JwtOptions {
-  secret: string
-  algorithm?: 'HS256'
+  secret?: string
+  privateKey?: JwtKeyMaterial
+  publicKey?: JwtKeyMaterial
+  algorithm?: JwtAlgorithm
   accessTtl?: string
   refreshTtl?: string
   issuer?: string
@@ -59,9 +62,17 @@ export function jwt(options: JwtOptions): JwtAuthStrategy {
   const refreshTtl = options.refreshTtl ?? DEFAULT_JWT_REFRESH_TTL
   const from = options.from ?? DEFAULT_JWT_TOKEN_SOURCES
   const store = options.refreshStore ?? memoryRefreshStore()
-  const secretKey = new TextEncoder().encode(options.secret)
+
+  let keysPromise: ReturnType<typeof resolveJwtKeys> | null = null
+  function getKeys() {
+    if (!keysPromise) {
+      keysPromise = resolveJwtKeys(algorithm, options.secret, options.privateKey, options.publicKey)
+    }
+    return keysPromise
+  }
 
   async function sign(payload: JWTPayload, ttl: string, jti: string): Promise<string> {
+    const { signingKey } = await getKeys()
     let builder = new SignJWT(payload)
       .setProtectedHeader({ alg: algorithm })
       .setIssuedAt()
@@ -69,11 +80,12 @@ export function jwt(options: JwtOptions): JwtAuthStrategy {
       .setJti(jti)
     if (options.issuer) builder = builder.setIssuer(options.issuer)
     if (options.audience) builder = builder.setAudience(options.audience)
-    return builder.sign(secretKey)
+    return builder.sign(signingKey)
   }
 
   async function verify(token: string): Promise<JWTPayload> {
-    const { payload } = await jwtVerify(token, secretKey, {
+    const { verificationKey } = await getKeys()
+    const { payload } = await jwtVerify(token, verificationKey, {
       algorithms: [algorithm],
       issuer: options.issuer,
       audience: options.audience,
