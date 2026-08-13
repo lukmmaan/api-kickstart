@@ -1,7 +1,7 @@
 {
   "name": "@kickstart/typeorm",
   "version": "0.1.0",
-  "description": "api-kickstart database adapter for typeorm. Not implemented yet.",
+  "description": "api-kickstart database adapter for TypeORM.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -14,10 +14,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "api-kickstart": "^0.1.0"
+    "api-kickstart": "^0.1.0",
+    "typeorm": "^0.3.20",
+    "reflect-metadata": "^0.2.2"
   },
   "devDependencies": {
     "api-kickstart": "^0.1.0",
+    "typeorm": "^0.3.20",
+    "reflect-metadata": "^0.2.2",
     "typescript": "^5.5.4",
     "@types/node": "^22.5.0"
   }

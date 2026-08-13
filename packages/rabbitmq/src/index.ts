@@ -1,10 +1,74 @@
-import type { BrokerAdapter } from 'api-kickstart'
+import amqp, { type ConsumeMessage } from 'amqplib'
+import type { BrokerAdapter, BrokerConsumeOptions } from 'api-kickstart'
+import type { RabbitmqOptions } from './types.js'
 
-export interface RabbitmqOptions {
-  [key: string]: unknown
-}
+export type { RabbitmqOptions }
 
-export function rabbitmq(options: Record<string, unknown>): BrokerAdapter {
-  void options
-  throw new Error('@kickstart/rabbitmq is not implemented yet. See the "Roadmap" section of the api-kickstart README.')
+type AmqpConnection = Awaited<ReturnType<typeof amqp.connect>>
+type AmqpChannel = Awaited<ReturnType<AmqpConnection['createChannel']>>
+
+export function rabbitmq(options: RabbitmqOptions): BrokerAdapter {
+  const exchange = options.exchange ?? ''
+  const exchangeType = options.exchangeType ?? 'topic'
+
+  let connectionPromise: Promise<AmqpConnection> | null = null
+  let channelPromise: Promise<AmqpChannel> | null = null
+
+  async function getChannel(): Promise<AmqpChannel> {
+    if (!connectionPromise) {
+      connectionPromise = amqp.connect(options.url)
+    }
+    const connection = connectionPromise
+    if (!channelPromise) {
+      channelPromise = connection.then(async (conn) => {
+        const channel = await conn.createChannel()
+        if (exchange) await channel.assertExchange(exchange, exchangeType, { durable: true })
+        return channel
+      })
+    }
+    return channelPromise
+  }
+
+  return {
+    async publish(topic, message) {
+      const channel = await getChannel()
+      const payload = Buffer.from(JSON.stringify(message))
+      if (exchange) {
+        channel.publish(exchange, topic, payload, { persistent: true })
+      } else {
+        channel.sendToQueue(topic, payload, { persistent: true })
+      }
+    },
+
+    consume(consumeOptions: BrokerConsumeOptions) {
+      void (async () => {
+        const channel = await getChannel()
+        await channel.prefetch(consumeOptions.concurrency ?? 1)
+        const queueName = consumeOptions.group ? `${consumeOptions.topic}.${consumeOptions.group}` : consumeOptions.topic
+        await channel.assertQueue(queueName, { durable: true })
+        if (exchange) await channel.bindQueue(queueName, exchange, consumeOptions.topic)
+
+        await channel.consume(queueName, (msg: ConsumeMessage | null) => {
+          if (!msg) return
+          void (async () => {
+            try {
+              const message = JSON.parse(msg.content.toString('utf8'))
+              const attempt = (msg.properties.headers?.['x-attempt'] as number | undefined) ?? 1
+              await consumeOptions.onMessage(message, { topic: consumeOptions.topic, attempt })
+              channel.ack(msg)
+            } catch {
+              channel.nack(msg, false, false)
+            }
+          })()
+        })
+      })()
+    },
+
+    async close() {
+      const channel = channelPromise ? await channelPromise : null
+      await channel?.close()
+      const connection = connectionPromise ? await connectionPromise : null
+      await connection?.close()
+    },
+  }
 }

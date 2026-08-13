@@ -1,7 +1,7 @@
 {
   "name": "@kickstart/kafka",
   "version": "0.1.0",
-  "description": "api-kickstart message broker adapter for kafka. Not implemented yet.",
+  "description": "api-kickstart message broker adapter for Kafka and Redpanda.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -14,10 +14,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "api-kickstart": "^0.1.0"
+    "api-kickstart": "^0.1.0",
+    "kafkajs": "^2.2.4"
   },
   "devDependencies": {
     "api-kickstart": "^0.1.0",
+    "kafkajs": "^2.2.4",
     "typescript": "^5.5.4",
     "@types/node": "^22.5.0"
   }

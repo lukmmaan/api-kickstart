@@ -1,47 +1,10 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { DispatchHandler, FrameworkAdapter, RequestLike } from 'api-kickstart'
+import { readBody } from './body.js'
+import { parseCookies } from './cookies.js'
 
 export interface HttpAdapterOptions {
   server?: Server
-}
-
-function parseCookies(header: string | undefined): Record<string, string> {
-  const cookies: Record<string, string> = {}
-  if (!header) return cookies
-  for (const part of header.split(';')) {
-    const separatorIndex = part.indexOf('=')
-    if (separatorIndex === -1) continue
-    const key = part.slice(0, separatorIndex).trim()
-    const value = part.slice(separatorIndex + 1).trim()
-    if (!key) continue
-    cookies[key] = decodeURIComponent(value)
-  }
-  return cookies
-}
-
-function readBody(req: IncomingMessage): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    req.on('data', (chunk) => chunks.push(chunk))
-    req.on('end', () => {
-      if (chunks.length === 0) {
-        resolve(undefined)
-        return
-      }
-      const raw = Buffer.concat(chunks).toString('utf8')
-      const contentType = req.headers['content-type'] ?? ''
-      if (contentType.includes('application/json')) {
-        try {
-          resolve(JSON.parse(raw))
-        } catch (err) {
-          reject(err)
-        }
-        return
-      }
-      resolve(raw)
-    })
-    req.on('error', reject)
-  })
 }
 
 export function http(options: HttpAdapterOptions = {}): FrameworkAdapter {

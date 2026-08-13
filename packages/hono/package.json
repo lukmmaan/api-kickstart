@@ -1,7 +1,7 @@
 {
   "name": "@kickstart/hono",
   "version": "0.1.0",
-  "description": "api-kickstart framework adapter for hono. Not implemented yet.",
+  "description": "api-kickstart framework adapter for Hono (Node, Bun, Deno, Cloudflare Workers).",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -14,10 +14,15 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "api-kickstart": "^0.1.0"
+    "api-kickstart": "^0.1.0",
+    "hono": "^4.6.0"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0"
   },
   "devDependencies": {
     "api-kickstart": "^0.1.0",
+    "hono": "^4.6.0",
     "typescript": "^5.5.4",
     "@types/node": "^22.5.0"
   }

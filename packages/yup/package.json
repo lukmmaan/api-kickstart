@@ -1,7 +1,7 @@
 {
   "name": "@kickstart/yup",
   "version": "0.1.0",
-  "description": "api-kickstart validation adapter for yup. Not implemented yet.",
+  "description": "api-kickstart validation adapter for Yup.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -14,10 +14,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "api-kickstart": "^0.1.0"
+    "api-kickstart": "^0.1.0",
+    "yup": "^1.4.0"
   },
   "devDependencies": {
     "api-kickstart": "^0.1.0",
+    "yup": "^1.4.0",
     "typescript": "^5.5.4",
     "@types/node": "^22.5.0"
   }

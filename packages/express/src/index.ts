@@ -1,22 +1,11 @@
-import expressLib, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from 'express'
+import expressLib, { type Express, type Request, type RequestHandler, type Response } from 'express'
 import type { DispatchHandler, FrameworkAdapter, RequestLike } from 'api-kickstart'
+import { parseCookies } from './cookies.js'
+
+export { adapt } from './adapt.js'
 
 export interface ExpressAdapterOptions {
   app?: Express
-}
-
-function parseCookies(header: string | undefined): Record<string, string> {
-  const cookies: Record<string, string> = {}
-  if (!header) return cookies
-  for (const part of header.split(';')) {
-    const separatorIndex = part.indexOf('=')
-    if (separatorIndex === -1) continue
-    const key = part.slice(0, separatorIndex).trim()
-    const value = part.slice(separatorIndex + 1).trim()
-    if (!key) continue
-    cookies[key] = decodeURIComponent(value)
-  }
-  return cookies
 }
 
 export function express(options: ExpressAdapterOptions = {}): FrameworkAdapter {
@@ -73,17 +62,5 @@ export function express(options: ExpressAdapterOptions = {}): FrameworkAdapter {
         server.close((err) => (err ? reject(err) : resolve()))
       })
     },
-  }
-}
-
-export function adapt(middleware: RequestHandler) {
-  return async (ctx: { raw: { req: unknown; res: unknown } }, next: () => Promise<void>) => {
-    await new Promise<void>((resolve, reject) => {
-      middleware(ctx.raw.req as Request, ctx.raw.res as Response, ((err?: unknown) => {
-        if (err) reject(err)
-        else resolve()
-      }) as NextFunction)
-    })
-    await next()
   }
 }

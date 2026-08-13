@@ -1,10 +1,34 @@
+import 'reflect-metadata'
+import { NestFactory } from '@nestjs/core'
+import type { NestExpressApplication } from '@nestjs/platform-express'
 import type { FrameworkAdapter } from 'api-kickstart'
+import { KickstartModule, dispatchRef } from './controller.js'
 
-export interface NestAdapterOptions {
-  [key: string]: unknown
-}
+export function nest(): FrameworkAdapter {
+  let app: NestExpressApplication | null = null
 
-export function nest(options: Record<string, unknown> = {}): FrameworkAdapter {
-  void options
-  throw new Error('@kickstart/nest is not implemented yet. See the "Roadmap" section of the api-kickstart README.')
+  return {
+    name: 'nest',
+
+    onRequest(handler) {
+      dispatchRef.current = handler
+    },
+
+    listen(port, cb) {
+      void (async () => {
+        app = await NestFactory.create<NestExpressApplication>(KickstartModule, { logger: false })
+        await app.listen(port)
+        cb?.()
+      })()
+      return null
+    },
+
+    handler() {
+      return app?.getHttpAdapter().getInstance()
+    },
+
+    async close() {
+      await app?.close()
+    },
+  }
 }

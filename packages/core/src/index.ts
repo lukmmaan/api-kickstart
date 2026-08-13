@@ -3,8 +3,12 @@ import { buildCorsHeaders, resolveCorsOptions, type CorsConfig, type CorsOptions
 import { checkPermissions, checkRoles, resolveScope, type PermissionMap, type RoleHierarchy, type ScopeMap } from './authorize.js'
 import { runWithContext } from './context.js'
 import { Forbidden, NotFound, Unauthorized, ValidationError, formatError } from './errors.js'
+import { GroupBuilder, type GroupOptions } from './group.js'
+import { defaultLogger } from './logger.js'
+import { runMiddlewareChain } from './middleware.js'
 import { buildOpenApiSpec, type OpenApiOptions } from './openapi.js'
 import { registerResource, type ResourceOptions } from './resource.js'
+import { compilePath, type CompiledRoute } from './router.js'
 import type { JwtAuthStrategy } from './auth/jwt.js'
 import {
   SchemaValidationError,
@@ -30,6 +34,7 @@ export type { CorsConfig, CorsOptions } from './cors.js'
 export type { PermissionMap, RoleHierarchy, ScopeMap, ScopeResolver } from './authorize.js'
 export type { ResourceOptions, ResourceHooks, ResourceAction } from './resource.js'
 export type { OpenApiOptions, OpenApiInfo } from './openapi.js'
+export { GroupBuilder, type GroupOptions } from './group.js'
 
 export interface CreateAppOptions {
   framework: FrameworkAdapter
@@ -44,15 +49,6 @@ export interface CreateAppOptions {
   scope?: ScopeMap
   scopeAudit?: 'off' | 'warn' | 'throw'
   logger?: Logger
-}
-
-export interface GroupOptions {
-  prefix?: string
-  auth?: boolean | string | string[]
-  roles?: string[]
-  permissions?: string[]
-  scope?: string
-  middleware?: Middleware[]
 }
 
 export interface AuthRoutesConfig {
@@ -75,95 +71,6 @@ export interface InjectResult {
   status: number
   body: unknown
   headers: Record<string, string>
-}
-
-interface CompiledRoute {
-  config: RouteConfig
-  regex: RegExp
-  keys: string[]
-}
-
-function defaultLogger(bindings: Record<string, unknown> = {}): Logger {
-  return {
-    debug: (...args) => console.debug(bindings, ...args),
-    info: (...args) => console.info(bindings, ...args),
-    warn: (...args) => console.warn(bindings, ...args),
-    error: (...args) => console.error(bindings, ...args),
-    child: (extra) => defaultLogger({ ...bindings, ...extra }),
-  }
-}
-
-function compilePath(path: string): { regex: RegExp; keys: string[] } {
-  const keys: string[] = []
-  const pattern = path
-    .split('/')
-    .map((segment) => {
-      if (segment.startsWith(':')) {
-        keys.push(segment.slice(1))
-        return '([^/]+)'
-      }
-      return segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    })
-    .join('/')
-  return { regex: new RegExp(`^${pattern}$`), keys }
-}
-
-function joinPaths(...parts: (string | undefined)[]): string {
-  const joined = parts.filter(Boolean).join('/')
-  const normalized = joined.replace(/\/+/g, '/')
-  return normalized === '' ? '/' : normalized
-}
-
-function mergeGroupConfig(group: GroupOptions, config: RouteConfig): RouteConfig {
-  return {
-    ...config,
-    path: joinPaths(group.prefix, config.path),
-    auth: config.auth ?? group.auth,
-    roles: config.roles ?? group.roles,
-    permissions: config.permissions ?? group.permissions,
-    scope: config.scope ?? group.scope,
-    middleware: [...(group.middleware ?? []), ...(config.middleware ?? [])],
-  }
-}
-
-export class GroupBuilder {
-  constructor(private app: App, private options: GroupOptions) {}
-
-  route(config: RouteConfig): this {
-    this.app.route(mergeGroupConfig(this.options, config))
-    return this
-  }
-
-  group(options: GroupOptions, fn: (group: GroupBuilder) => void): this {
-    const merged: GroupOptions = {
-      prefix: joinPaths(this.options.prefix, options.prefix),
-      auth: options.auth ?? this.options.auth,
-      roles: options.roles ?? this.options.roles,
-      permissions: options.permissions ?? this.options.permissions,
-      scope: options.scope ?? this.options.scope,
-      middleware: [...(this.options.middleware ?? []), ...(options.middleware ?? [])],
-    }
-    fn(new GroupBuilder(this.app, merged))
-    return this
-  }
-}
-
-async function runMiddlewareChain(chain: Middleware[], ctx: Context, final: () => Promise<unknown>): Promise<unknown> {
-  let result: unknown
-  let index = -1
-
-  const dispatchNext = async (i: number): Promise<void> => {
-    if (i <= index) throw new Error('next() called multiple times')
-    index = i
-    if (i === chain.length) {
-      result = await final()
-      return
-    }
-    await chain[i](ctx, () => dispatchNext(i + 1))
-  }
-
-  await dispatchNext(0)
-  return result
 }
 
 export class App {

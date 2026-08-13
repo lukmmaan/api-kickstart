@@ -1,7 +1,7 @@
 {
   "name": "@kickstart/redis-stream",
   "version": "0.1.0",
-  "description": "api-kickstart message broker adapter for redis-stream. Not implemented yet.",
+  "description": "api-kickstart message broker adapter for Redis Streams.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -14,10 +14,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "api-kickstart": "^0.1.0"
+    "api-kickstart": "^0.1.0",
+    "ioredis": "^5.4.1"
   },
   "devDependencies": {
     "api-kickstart": "^0.1.0",
+    "ioredis": "^5.4.1",
     "typescript": "^5.5.4",
     "@types/node": "^22.5.0"
   }

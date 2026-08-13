@@ -1,5 +1,19 @@
-import type { Validator } from 'api-kickstart'
+import * as v from 'valibot'
+import { SchemaValidationError, type Validator } from 'api-kickstart'
 
 export function valibot(): Validator {
-  throw new Error('@kickstart/valibot is not implemented yet. See the "Roadmap" section of the api-kickstart README.')
+  return {
+    name: 'valibot',
+    parse(schema, value) {
+      const result = v.safeParse(schema as v.GenericSchema, value)
+      if (!result.success) {
+        const issues = result.issues.map((issue) => ({
+          path: issue.path?.map((segment) => String(segment.key)).join('.') ?? '',
+          message: issue.message,
+        }))
+        throw new SchemaValidationError(issues)
+      }
+      return result.output
+    },
+  }
 }

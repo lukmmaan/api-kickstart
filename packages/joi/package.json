@@ -1,7 +1,7 @@
 {
   "name": "@kickstart/joi",
   "version": "0.1.0",
-  "description": "api-kickstart validation adapter for joi. Not implemented yet.",
+  "description": "api-kickstart validation adapter for Joi.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -14,10 +14,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "api-kickstart": "^0.1.0"
+    "api-kickstart": "^0.1.0",
+    "joi": "^17.13.3"
   },
   "devDependencies": {
     "api-kickstart": "^0.1.0",
+    "joi": "^17.13.3",
     "typescript": "^5.5.4",
     "@types/node": "^22.5.0"
   }
