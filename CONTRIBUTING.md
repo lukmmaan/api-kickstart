@@ -2,14 +2,14 @@
 
 ## Repository structure
 
-Everything ships as a single npm package, `@api-kickstart/core`. The workspace is:
+Everything ships as a single npm package, `@api-kickstart/api-kickstart`. The workspace is:
 
-- `packages/core` — the only published package. `packages/core/src` holds the core engine (routing, context, auth, authorization, CORS, errors, env, testing, OpenAPI); `packages/core/src/adapters/<name>` holds one directory per adapter (framework, database, broker, validator, storage, logger), each exposed as a subpath export (`@api-kickstart/core/<name>`) in `packages/core/package.json`'s `exports` map.
+- `packages/core` — the only published package. `packages/core/src` holds the core engine (routing, context, auth, authorization, CORS, errors, env, testing, OpenAPI); `packages/core/src/adapters/<name>` holds one directory per adapter (framework, database, broker, validator, storage, logger), each exposed as a subpath export (`@api-kickstart/api-kickstart/<name>`) in `packages/core/package.json`'s `exports` map.
 - `examples/*` — runnable reference apps, not published. `examples/blog-api` is the current one.
 
 Adapters typically split into `index.ts` (the factory function), `types.ts` (options), and `errors.ts` (mapping the underlying library's errors to `AppError` subclasses) once there's more than one concern to separate.
 
-Every adapter's underlying library (`express`, `pg`, `zod`, ...) is an optional `peerDependency` of `@api-kickstart/core` — declared in `peerDependencies` + `peerDependenciesMeta` so npm doesn't force-install libraries nobody asked for, and also listed in `devDependencies` so the monorepo itself can build, typecheck, and test every adapter.
+Every adapter's underlying library (`express`, `pg`, `zod`, ...) is an optional `peerDependency` of `@api-kickstart/api-kickstart` — declared in `peerDependencies` + `peerDependenciesMeta` so npm doesn't force-install libraries nobody asked for, and also listed in `devDependencies` so the monorepo itself can build, typecheck, and test every adapter.
 
 ## Setup
 
@@ -62,7 +62,7 @@ Every PR that changes published behavior needs a changeset:
 npx changeset
 ```
 
-Pick `@api-kickstart/core`, the semver bump, and write a one-line summary — it becomes the changelog entry. `examples/*` is excluded from versioning (see `.changeset/config.json`).
+Pick `@api-kickstart/api-kickstart`, the semver bump, and write a one-line summary — it becomes the changelog entry. `examples/*` is excluded from versioning (see `.changeset/config.json`).
 
 Maintainers run `npm run version` to apply pending changesets to `package.json`/`CHANGELOG.md`, and `npm run release` to build and publish.
 

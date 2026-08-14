@@ -1,5 +1,5 @@
 {
-  "name": "@api-kickstart/core",
+  "name": "@api-kickstart/api-kickstart",
   "version": "1.0.0",
   "description": "Auth, authorization, validation, CORS, error handling, database, and message broker, wired together with sane defaults, swappable everywhere.",
   "license": "MIT",
