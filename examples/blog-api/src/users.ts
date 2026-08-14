@@ -1,4 +1,4 @@
-import { hashPassword, verifyPassword } from 'api-kickstart/auth'
+import { hashPassword, verifyPassword } from '@api-kickstart/core/auth'
 
 export interface DemoUser {
   id: string

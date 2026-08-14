@@ -1,4 +1,4 @@
-import type { DbAdapter } from 'api-kickstart'
+import type { DbAdapter } from '@api-kickstart/core'
 
 export interface Post {
   id: string

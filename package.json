@@ -8,8 +8,8 @@
     "examples/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace=api-kickstart && npm run build --workspaces --if-present",
-    "typecheck": "npm run build --workspace=api-kickstart && npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspace=@api-kickstart/core",
+    "typecheck": "npm run build --workspace=@api-kickstart/core && npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint packages/*/src examples/*/src",
