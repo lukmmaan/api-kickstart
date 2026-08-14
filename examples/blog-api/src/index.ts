@@ -1,8 +1,8 @@
 import { z } from 'zod'
-import { createApp } from 'api-kickstart'
-import { jwt } from 'api-kickstart/auth'
-import { express } from '@kickstart/express'
-import { zod } from '@kickstart/zod'
+import { createApp } from '@api-kickstart/api-kickstart'
+import { jwt } from '@api-kickstart/api-kickstart/auth'
+import { express } from '@api-kickstart/api-kickstart/express'
+import { zod } from '@api-kickstart/api-kickstart/zod'
 import { createInMemoryDb } from './db.js'
 import { findUserByCredentials, findUserById } from './users.js'
 

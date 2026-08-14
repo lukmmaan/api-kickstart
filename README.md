@@ -2,11 +2,11 @@
 
 > Stop rewriting the same 800 lines on every new project. Auth, authorization, validation, CORS, error handling, database, and message broker — wired together with sane defaults, swappable everywhere.
 
-[![npm version](https://img.shields.io/npm/v/api-kickstart.svg)](https://www.npmjs.com/package/api-kickstart)
+[![npm version](https://img.shields.io/npm/v/%40api-kickstart%2Fapi-kickstart.svg)](https://www.npmjs.com/package/@api-kickstart/api-kickstart)
 [![CI](https://github.com/lukmmaan/api-kickstart/actions/workflows/ci.yml/badge.svg)](https://github.com/lukmmaan/api-kickstart/actions/workflows/ci.yml)
-[![bundle size](https://img.shields.io/bundlephobia/minzip/api-kickstart)](https://bundlephobia.com/package/api-kickstart)
-[![license](https://img.shields.io/npm/l/api-kickstart.svg)](./LICENSE)
-[![types](https://img.shields.io/npm/types/api-kickstart.svg)](https://www.typescriptlang.org/)
+[![bundle size](https://img.shields.io/bundlephobia/minzip/%40api-kickstart%2Fapi-kickstart)](https://bundlephobia.com/package/@api-kickstart/api-kickstart)
+[![license](https://img.shields.io/npm/l/%40api-kickstart%2Fapi-kickstart.svg)](./LICENSE)
+[![types](https://img.shields.io/npm/types/%40api-kickstart%2Fapi-kickstart.svg)](https://www.typescriptlang.org/)
 
 ---
 
@@ -74,40 +74,40 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
 ## Install
 
 ```bash
-npm install api-kickstart
+npm install @api-kickstart/api-kickstart
 ```
 
-Then add only the adapters you need:
+One package. Every framework, database, broker, validator, storage, and logging adapter lives inside it as a subpath import — `@api-kickstart/api-kickstart/express`, `@api-kickstart/api-kickstart/prisma`, `@api-kickstart/api-kickstart/zod`, and so on. Then install the *underlying library* for whichever ones you actually use:
 
 ```bash
 # framework
-npm install @kickstart/express      # or @kickstart/fastify, @kickstart/hono
+npm install express      # or fastify, hono, koa, @nestjs/core @nestjs/common @nestjs/platform-express
 
 # database
-npm install @kickstart/prisma       # or mongoose, drizzle, knex, typeorm, sequelize
+npm install @prisma/client       # or mongoose, drizzle-orm, knex, typeorm, sequelize, pg, mongodb
 
 # broker (optional)
-npm install @kickstart/rabbitmq     # or kafka, redis-stream, sqs, nats, bullmq
+npm install amqplib     # or kafkajs, ioredis, bullmq, @aws-sdk/client-sqs, nats, mqtt, @google-cloud/pubsub
 
 # validation (pick one)
-npm install @kickstart/zod          # or joi, yup, valibot, typebox
+npm install zod          # or joi joi-to-json, yup @sodaru/yup-to-json-schema, valibot @valibot/to-json-schema, @sinclair/typebox
 
 # structured logging (optional)
-npm install @kickstart/pino
+npm install pino
 ```
 
-The core has no dependencies and pulls in nothing you didn't ask for.
+Every adapter's underlying library is an **optional peer dependency** — npm won't force-install libraries for adapters you don't use, and importing a subpath you haven't installed the library for fails loudly at that `import`, not silently at runtime.
 
 ---
 
 ## 60-second start
 
 ```ts
-import { createApp } from 'api-kickstart'
-import { express } from '@kickstart/express'
-import { jwt } from 'api-kickstart/auth'
-import { zod } from '@kickstart/zod'
-import { prisma } from '@kickstart/prisma'
+import { createApp } from '@api-kickstart/api-kickstart'
+import { express } from '@api-kickstart/api-kickstart/express'
+import { jwt } from '@api-kickstart/api-kickstart/auth'
+import { zod } from '@api-kickstart/api-kickstart/zod'
+import { prisma } from '@api-kickstart/api-kickstart/prisma'
 import { z } from 'zod'
 
 const app = createApp({
@@ -177,7 +177,7 @@ Authentication answers *who is this*. It attaches `ctx.user` or fails with `401`
 ### JWT
 
 ```ts
-import { jwt } from 'api-kickstart/auth'
+import { jwt } from '@api-kickstart/api-kickstart/auth'
 
 jwt({
   secret: env.JWT_SECRET,          // or `publicKey` / `privateKey` for RS256
@@ -216,7 +216,7 @@ Refresh tokens are **rotated** by default: using one invalidates it and issues a
 ### Password hashing
 
 ```ts
-import { hashPassword, verifyPassword } from 'api-kickstart/auth'
+import { hashPassword, verifyPassword } from '@api-kickstart/api-kickstart/auth'
 
 const hash = await hashPassword(plainTextPassword)   // scrypt, node:crypto, no extra dependency
 await verifyPassword(plainTextPassword, hash)          // constant-time compare
@@ -227,7 +227,7 @@ Use these in `jwt()`'s `verifyCredentials` or wherever you check a login. `hashP
 ### Session
 
 ```ts
-import { session } from 'api-kickstart/auth'
+import { session } from '@api-kickstart/api-kickstart/auth'
 
 session({
   store: redisStore(redis),        // or memoryStore(), dbStore(db)
@@ -247,7 +247,7 @@ Session IDs are regenerated on login to prevent session fixation.
 ### API key
 
 ```ts
-import { apiKey } from 'api-kickstart/auth'
+import { apiKey } from '@api-kickstart/api-kickstart/auth'
 
 apiKey({
   from: 'header:x-api-key',
@@ -261,7 +261,7 @@ Keys are compared in constant time. Store hashes, never raw keys — the `resolv
 ### Basic auth
 
 ```ts
-import { basic } from 'api-kickstart/auth'
+import { basic } from '@api-kickstart/api-kickstart/auth'
 
 basic({ verify: async (user, pass) => checkPassword(user, pass) })
 ```
@@ -271,7 +271,7 @@ Intended for internal tools and health endpoints. Refuses to run over plain HTTP
 ### OAuth / OIDC
 
 ```ts
-import { oidc } from 'api-kickstart/auth'
+import { oidc } from '@api-kickstart/api-kickstart/auth'
 
 const google = oidc({
   issuer: 'https://accounts.google.com',
@@ -511,7 +511,7 @@ app.route({
 With Joi:
 
 ```ts
-import { joi } from '@kickstart/joi'
+import { joi } from '@api-kickstart/api-kickstart/joi'
 import Joi from 'joi'
 
 createApp({ validator: joi() })
@@ -673,7 +673,7 @@ cors: {
 Your own, at any level:
 
 ```ts
-import { logger, helmet } from 'api-kickstart/middleware'
+import { logger, helmet } from '@api-kickstart/api-kickstart/middleware'
 
 createApp({ middleware: [logger(), helmet()] })            // global
 app.group({ middleware: [auditTrail()] }, /* ... */)       // group
@@ -693,7 +693,7 @@ const timing = async (ctx, next) => {
 Existing Express or Fastify middleware still works — pass it through `adapt()`:
 
 ```ts
-import { adapt } from '@kickstart/express'
+import { adapt } from '@api-kickstart/api-kickstart/express'
 middleware: [adapt(someExpressMiddleware)]
 ```
 
@@ -702,7 +702,7 @@ middleware: [adapt(someExpressMiddleware)]
 Imported from `api-kickstart/middleware`, all real implementations — none of these are stubs:
 
 ```ts
-import { requestId, logger, rateLimit, compression, helmet, bodyLimit, timeout, idempotency, cache, csrf } from 'api-kickstart/middleware'
+import { requestId, logger, rateLimit, compression, helmet, bodyLimit, timeout, idempotency, cache, csrf } from '@api-kickstart/api-kickstart/middleware'
 
 createApp({
   middleware: [
@@ -737,12 +737,12 @@ app.route({
 })
 ```
 
-`rateLimit`, `idempotency`, and `cache` each accept a `store` option (`RateLimitStore` / `IdempotencyStore` / `CacheStore`) — the in-memory default is fine for a single instance. For anything running more than one instance behind a load balancer, `@kickstart/redis` provides real Redis-backed stores for all three, plus a session store:
+`rateLimit`, `idempotency`, and `cache` each accept a `store` option (`RateLimitStore` / `IdempotencyStore` / `CacheStore`) — the in-memory default is fine for a single instance. For anything running more than one instance behind a load balancer, `@api-kickstart/api-kickstart/redis` provides real Redis-backed stores for all three, plus a session store:
 
 ```ts
-import { redisRateLimitStore, redisIdempotencyStore, redisCacheStore, redisSessionStore } from '@kickstart/redis'
-import { rateLimit, idempotency, cache } from 'api-kickstart/middleware'
-import { session } from 'api-kickstart/auth'
+import { redisRateLimitStore, redisIdempotencyStore, redisCacheStore, redisSessionStore } from '@api-kickstart/api-kickstart/redis'
+import { rateLimit, idempotency, cache } from '@api-kickstart/api-kickstart/middleware'
+import { session } from '@api-kickstart/api-kickstart/auth'
 
 const redisOptions = { url: env.REDIS_URL }
 
@@ -764,7 +764,7 @@ Every store accepts either `{ url }` or an existing `ioredis` client via `{ redi
 Structured "who did what" records — distinct from `scopeAudit`, which is about catching a handler that forgot to apply its scope filter, not about producing a compliance trail:
 
 ```ts
-import { auditLog } from 'api-kickstart/middleware'
+import { auditLog } from '@api-kickstart/api-kickstart/middleware'
 
 createApp({
   middleware: [
@@ -808,10 +808,10 @@ handler: async (ctx) => {
 }
 ```
 
-`ctx.logger` defaults to a thin `console`-based logger. Swap it for structured, production-grade logging with `@kickstart/pino`:
+`ctx.logger` defaults to a thin `console`-based logger. Swap it for structured, production-grade logging with `@api-kickstart/api-kickstart/pino`:
 
 ```ts
-import { pinoLogger } from '@kickstart/pino'
+import { pinoLogger } from '@api-kickstart/api-kickstart/pino'
 
 createApp({ logger: pinoLogger({ pinoOptions: { level: 'info' } }) })
 ```
@@ -821,7 +821,7 @@ createApp({ logger: pinoLogger({ pinoOptions: { level: 'info' } }) })
 Backed by `AsyncLocalStorage`, so you don't have to thread `user` through every layer:
 
 ```ts
-import { currentUser, currentRequestId } from 'api-kickstart/context'
+import { currentUser, currentRequestId } from '@api-kickstart/api-kickstart/context'
 
 // deep inside a service or model hook
 const user = currentUser()
@@ -836,7 +836,7 @@ This is what makes audit logging painless — your model hooks can record *who* 
 Throw; the error handler formats it.
 
 ```ts
-import { NotFound, Forbidden, Conflict, BadRequest } from 'api-kickstart/errors'
+import { NotFound, Forbidden, Conflict, BadRequest } from '@api-kickstart/api-kickstart/errors'
 
 if (!order) throw new NotFound('Order not found')
 if (order.locked) throw new Conflict('Order is locked', { orderId: order.id })
@@ -866,22 +866,22 @@ The adapter's job is small: give the app a client, translate scope filters into 
 
 | Adapter | Databases |
 |---|---|
-| `@kickstart/prisma` | Postgres, MySQL, SQLite, SQL Server, CockroachDB, MongoDB |
-| `@kickstart/drizzle` | Postgres, MySQL, SQLite, Turso, Neon, PlanetScale |
-| `@kickstart/mongoose` | MongoDB |
-| `@kickstart/knex` | Postgres, MySQL, SQLite, Oracle, SQL Server |
-| `@kickstart/typeorm` | most SQL databases |
-| `@kickstart/sequelize` | Postgres, MySQL, MariaDB, SQLite, SQL Server |
-| `@kickstart/mongodb` | MongoDB driver, no ODM |
-| `@kickstart/pg` | raw `node-postgres` |
+| `@api-kickstart/api-kickstart/prisma` | Postgres, MySQL, SQLite, SQL Server, CockroachDB, MongoDB |
+| `@api-kickstart/api-kickstart/drizzle` | Postgres, MySQL, SQLite, Turso, Neon, PlanetScale |
+| `@api-kickstart/api-kickstart/mongoose` | MongoDB |
+| `@api-kickstart/api-kickstart/knex` | Postgres, MySQL, SQLite, Oracle, SQL Server |
+| `@api-kickstart/api-kickstart/typeorm` | most SQL databases |
+| `@api-kickstart/api-kickstart/sequelize` | Postgres, MySQL, MariaDB, SQLite, SQL Server |
+| `@api-kickstart/api-kickstart/mongodb` | MongoDB driver, no ODM |
+| `@api-kickstart/api-kickstart/pg` | raw `node-postgres` |
 
 ```ts
-import { prisma } from '@kickstart/prisma'
+import { prisma } from '@api-kickstart/api-kickstart/prisma'
 db: prisma(new PrismaClient())
 ```
 
 ```ts
-import { mongoose } from '@kickstart/mongoose'
+import { mongoose } from '@api-kickstart/api-kickstart/mongoose'
 db: mongoose(connection)
 ```
 
@@ -915,7 +915,7 @@ interface DbAdapter {
 A conformance suite is published so you can verify yours:
 
 ```ts
-import { runDbConformance } from 'api-kickstart/testing'
+import { runDbConformance } from '@api-kickstart/api-kickstart/testing'
 runDbConformance(() => myAdapter())
 ```
 
@@ -927,20 +927,20 @@ Optional. Skip the import and nothing broker-related is loaded.
 
 | Adapter | Broker |
 |---|---|
-| `@kickstart/rabbitmq` | RabbitMQ (AMQP 0-9-1) |
-| `@kickstart/kafka` | Kafka, Redpanda |
-| `@kickstart/redis-stream` | Redis Streams |
-| `@kickstart/bullmq` | BullMQ (Redis) |
-| `@kickstart/sqs` | AWS SQS + SNS |
-| `@kickstart/nats` | NATS, JetStream |
-| `@kickstart/mqtt` | MQTT |
-| `@kickstart/pubsub` | Google Cloud Pub/Sub |
-| `@kickstart/memory` | in-process, for tests |
+| `@api-kickstart/api-kickstart/rabbitmq` | RabbitMQ (AMQP 0-9-1) |
+| `@api-kickstart/api-kickstart/kafka` | Kafka, Redpanda |
+| `@api-kickstart/api-kickstart/redis-stream` | Redis Streams |
+| `@api-kickstart/api-kickstart/bullmq` | BullMQ (Redis) |
+| `@api-kickstart/api-kickstart/sqs` | AWS SQS + SNS |
+| `@api-kickstart/api-kickstart/nats` | NATS, JetStream |
+| `@api-kickstart/api-kickstart/mqtt` | MQTT |
+| `@api-kickstart/api-kickstart/pubsub` | Google Cloud Pub/Sub |
+| `@api-kickstart/api-kickstart/memory` | in-process, for tests |
 
 ### Publishing
 
 ```ts
-import { rabbitmq } from '@kickstart/rabbitmq'
+import { rabbitmq } from '@api-kickstart/api-kickstart/rabbitmq'
 
 const app = createApp({
   broker: rabbitmq({ url: env.AMQP_URL, exchange: 'app' }),
@@ -981,8 +981,8 @@ Consumers get the same context, validation, error normalization, and logging as 
 The hard part of publishing events: the database commits, then the broker call fails, and the event is gone forever.
 
 ```ts
-import { pgOutboxStore } from '@kickstart/pg'
-import { rabbitmq } from '@kickstart/rabbitmq'
+import { pgOutboxStore } from '@api-kickstart/api-kickstart/pg'
+import { rabbitmq } from '@api-kickstart/api-kickstart/rabbitmq'
 
 const outbox = pgOutboxStore(pgPool)
 
@@ -1003,12 +1003,12 @@ handler: async (ctx) => {
 
 A background relay (started automatically once `outbox` is set, stopped by `broker.close()`) polls for unpublished rows and delivers them for real, with at-least-once semantics — that means consumers **must be idempotent**.
 
-Three `OutboxStore` implementations ship out of the box — `pgOutboxStore` (`@kickstart/pg`), `knexOutboxStore` (`@kickstart/knex`, works against Postgres/MySQL/SQLite/anything Knex supports), and `mongodbOutboxStore` (`@kickstart/mongodb`). `rabbitmq()` and `kafka()` both accept the `outbox` option. Implementing `OutboxStore` (`save`, `listPending`, `markPublished`) against another database plugs the same mechanism into it.
+Three `OutboxStore` implementations ship out of the box — `pgOutboxStore` (`@api-kickstart/api-kickstart/pg`), `knexOutboxStore` (`@api-kickstart/api-kickstart/knex`, works against Postgres/MySQL/SQLite/anything Knex supports), and `mongodbOutboxStore` (`@api-kickstart/api-kickstart/mongodb`). `rabbitmq()` and `kafka()` both accept the `outbox` option. Implementing `OutboxStore` (`save`, `listPending`, `markPublished`) against another database plugs the same mechanism into it.
 
 ### Graceful shutdown
 
 ```ts
-import { gracefulShutdown } from 'api-kickstart'
+import { gracefulShutdown } from '@api-kickstart/api-kickstart'
 
 app.listen(port)
 gracefulShutdown(app, { drainTimeoutMs: 10_000, closeTimeoutMs: 10_000 })
@@ -1023,7 +1023,7 @@ On `SIGTERM` (and `SIGINT`), in order: stop accepting new HTTP requests (in-flig
 For persisting uploaded files (see [File uploads](#file-uploads)) or any other blob somewhere durable. Optional — skip the import and nothing storage-related is loaded.
 
 ```ts
-import { s3Storage } from '@kickstart/s3'
+import { s3Storage } from '@api-kickstart/api-kickstart/s3'
 
 const app = createApp({
   storage: s3Storage({ bucket: env.UPLOADS_BUCKET, region: env.AWS_REGION }),
@@ -1042,7 +1042,7 @@ app.route({
 })
 ```
 
-`@kickstart/s3` works against any S3-compatible endpoint (AWS S3, MinIO, R2, Cloudflare) — pass `endpoint` and `forcePathStyle: true` for the non-AWS ones. Write your own `StorageAdapter` (`put`, `get`, `delete`, `getSignedUrl`) to target something else; there's nothing S3-specific in how core uses it.
+`@api-kickstart/api-kickstart/s3` works against any S3-compatible endpoint (AWS S3, MinIO, R2, Cloudflare) — pass `endpoint` and `forcePathStyle: true` for the non-AWS ones. Write your own `StorageAdapter` (`put`, `get`, `delete`, `getSignedUrl`) to target something else; there's nothing S3-specific in how core uses it.
 
 ---
 
@@ -1051,7 +1051,7 @@ app.route({
 HMAC-SHA256 signing and verification, for receiving webhooks from a provider and for signing your own outbound ones — the same pattern Stripe and GitHub use:
 
 ```ts
-import { signWebhook, verifyWebhook, WebhookSignatureError } from 'api-kickstart'
+import { signWebhook, verifyWebhook, WebhookSignatureError } from '@api-kickstart/api-kickstart'
 
 // sending
 const body = JSON.stringify({ event: 'order.created', orderId: order.id })
@@ -1084,12 +1084,12 @@ The signature header is `t=<timestamp>,v1=<hex hmac>` — the timestamp is part 
 
 | Adapter | Framework |
 |---|---|
-| `@kickstart/express` | Express 4 and 5 |
-| `@kickstart/fastify` | Fastify 4 and 5 |
-| `@kickstart/hono` | Hono — Node, Bun, Deno, Cloudflare Workers |
-| `@kickstart/koa` | Koa |
-| `@kickstart/nest` | NestJS module |
-| `@kickstart/http` | Node's built-in `http`, no framework |
+| `@api-kickstart/api-kickstart/express` | Express 4 and 5 |
+| `@api-kickstart/api-kickstart/fastify` | Fastify 4 and 5 |
+| `@api-kickstart/api-kickstart/hono` | Hono — Node, Bun, Deno, Cloudflare Workers |
+| `@api-kickstart/api-kickstart/koa` | Koa |
+| `@api-kickstart/api-kickstart/nest` | NestJS module |
+| `@api-kickstart/api-kickstart/http` | Node's built-in `http`, no framework |
 
 Same route definitions across all of them. Switching frameworks means changing one import.
 
@@ -1107,7 +1107,7 @@ existing.use('/v2', app.handler())
 Environment variables, validated at boot:
 
 ```ts
-import { env } from 'api-kickstart/env'
+import { env } from '@api-kickstart/api-kickstart/env'
 import { z } from 'zod'
 
 export const config = env({
@@ -1152,7 +1152,7 @@ app.openapi({
 
 Paths, parameters, path-parameter names, auth requirements (`security`), tags, and summaries are derived from what you already declared on each route — no decorators, no JSDoc comments, no second source of truth that drifts.
 
-**Request and response schemas** are included too, when the configured validator supports it — all five validator adapters do: `@kickstart/zod` (via `zod-to-json-schema`), `@kickstart/typebox` (TypeBox schemas already *are* JSON Schema), `@kickstart/joi` (via `joi-to-json`), `@kickstart/yup` (via `@sodaru/yup-to-json-schema`), and `@kickstart/valibot` (via `@valibot/to-json-schema`):
+**Request and response schemas** are included too, when the configured validator supports it — all five validator adapters do: `@api-kickstart/api-kickstart/zod` (via `zod-to-json-schema`), `@api-kickstart/api-kickstart/typebox` (TypeBox schemas already *are* JSON Schema), `@api-kickstart/api-kickstart/joi` (via `joi-to-json`), `@api-kickstart/api-kickstart/yup` (via `@sodaru/yup-to-json-schema`), and `@api-kickstart/api-kickstart/valibot` (via `@valibot/to-json-schema`):
 
 ```ts
 app.route({
@@ -1200,7 +1200,7 @@ This is `setInterval` under the hood, running in-process — not a cron-expressi
 Running more than one instance? Pass a `lock` so only one instance actually runs the handler each tick, instead of all of them:
 
 ```ts
-import { redisLock } from '@kickstart/redis'
+import { redisLock } from '@api-kickstart/api-kickstart/redis'
 
 app.schedule(
   'expire-sessions',
@@ -1218,7 +1218,7 @@ Every instance's timer fires on the same cadence; whichever one wins the `SET NX
 ## Testing
 
 ```ts
-import { createTestApp } from 'api-kickstart/testing'
+import { createTestApp } from '@api-kickstart/api-kickstart/testing'
 
 const app = createTestApp({
   ...config,
@@ -1247,7 +1247,7 @@ Every command reads a config file — `api-kickstart.config.mjs` in the current 
 
 ```ts
 // api-kickstart.config.mjs
-import { createApp } from 'api-kickstart'
+import { createApp } from '@api-kickstart/api-kickstart'
 import { config as envSchema } from './src/env.js'
 
 export const app = createApp({ /* ... */ })
@@ -1318,15 +1318,15 @@ Out of scope. Use your ORM's migration tool.
 
 ---
 
-## Monorepo layout
+## Repository layout
 
-This repository is a workspace of independent packages:
+Everything ships as a single published package, `@api-kickstart/api-kickstart`, but the source stays organized by concern:
 
-- `packages/core` — the `api-kickstart` package itself (routing, context, auth strategies, authorization, CORS, errors, env, testing, OpenAPI). Split into focused modules (`router.ts`, `group.ts`, `middleware.ts`, `authorize.ts`, `cors.ts`, `resource.ts`, `openapi.ts`, `auth/*`) rather than one file.
-- `packages/<name>` — one package per adapter, published as `@kickstart/<name>`. Each wraps its underlying library's real client and, where it has more than one concern, splits into `index.ts` (the factory), `types.ts` (options), and `errors.ts` (error-code normalization to `AppError` subclasses).
+- `packages/core/src` — the core engine (routing, context, auth strategies, authorization, CORS, errors, env, testing, OpenAPI), split into focused modules (`router.ts`, `group.ts`, `middleware.ts`, `authorize.ts`, `cors.ts`, `resource.ts`, `openapi.ts`, `auth/*`, `builtins/*`) rather than one file.
+- `packages/core/src/adapters/<name>` — one directory per adapter (framework, database, broker, validator, storage, logger), each exposed as its own subpath export (`@api-kickstart/api-kickstart/<name>`). Each wraps its underlying library's real client and, where it has more than one concern, splits into `index.ts` (the factory), `types.ts` (options), and `errors.ts` (error-code normalization to `AppError` subclasses).
 - `examples/blog-api` — a runnable reference app (JWT auth, row-level scope, `resource()`, in-memory `DbAdapter`, zero external services) — see [its README](./examples/blog-api/README.md).
 
-Every adapter package is a working implementation, not a placeholder — see the [Roadmap](#roadmap) for what's still open (OIDC and the CLI).
+Every adapter is a working implementation, not a placeholder — see the [Roadmap](#roadmap) for what's still open.
 
 Tests run with `vitest` (`npm test`), linting with `eslint` (`npm run lint`), and CI runs both plus `build`/`typecheck` on every push and PR — see [CONTRIBUTING.md](./CONTRIBUTING.md) for the full workflow, including how to add a new adapter and how changesets/versioning work.
 
@@ -1345,20 +1345,20 @@ Tests run with `vitest` (`npm test`), linting with `eslint` (`npm run lint`), an
 - [x] `npx api-kickstart doctor` / `env:example` CLI
 - [x] Transactional outbox — `OutboxStore` + `startOutboxRelay`; `pgOutboxStore`, `knexOutboxStore`, and `mongodbOutboxStore` implementations, wired into `rabbitmq()`/`kafka()`
 - [x] Runtime `scopeAudit` — detects a scoped route's handler never reading `ctx.scope` at all, and warns/throws
-- [x] OpenAPI request/response schema introspection for every validator adapter: `@kickstart/zod`, `@kickstart/typebox`, `@kickstart/joi`, `@kickstart/yup`, `@kickstart/valibot`
+- [x] OpenAPI request/response schema introspection for every validator adapter: `@api-kickstart/api-kickstart/zod`, `@api-kickstart/api-kickstart/typebox`, `@api-kickstart/api-kickstart/joi`, `@api-kickstart/api-kickstart/yup`, `@api-kickstart/api-kickstart/valibot`
 - [x] `app.health()` / `app.metrics()` — liveness checks and Prometheus-format metrics
 - [x] `multipart/form-data` parsing on every framework adapter, no extra dependency
-- [x] `@kickstart/pino` — structured logger, swaps in for the default console logger
+- [x] `@api-kickstart/api-kickstart/pino` — structured logger, swaps in for the default console logger
 - [x] `hashPassword()` / `verifyPassword()` — scrypt-based, no extra dependency
-- [x] `@kickstart/redis` — Redis-backed `rateLimit`/`idempotency`/`cache`/`session` stores, for running behind a load balancer
-- [x] `@kickstart/s3` — `StorageAdapter` for S3-compatible object storage (AWS S3, MinIO, R2), exposed on `ctx.storage`
+- [x] `@api-kickstart/api-kickstart/redis` — Redis-backed `rateLimit`/`idempotency`/`cache`/`session` stores, for running behind a load balancer
+- [x] `@api-kickstart/api-kickstart/s3` — `StorageAdapter` for S3-compatible object storage (AWS S3, MinIO, R2), exposed on `ctx.storage`
 - [x] `csrf()` — double-submit-cookie middleware for cookie/session-based auth
 - [x] `npx api-kickstart routes` / `openapi:generate` CLI commands
 - [x] `app.schedule()` — interval-based in-process recurring tasks, stopped by `app.close()`
 - [x] `signWebhook()` / `verifyWebhook()` — HMAC-SHA256 with timestamp tolerance, constant-time comparison
 - [x] `auditLog()` — structured "who did what" middleware, pluggable sink
 - [x] `openapi({ serve })` renders a real interactive docs page (Scalar), not just the raw JSON spec again
-- [x] `app.schedule({ lock })` — `redisLock` (`@kickstart/redis`) runs a scheduled task once per cluster instead of once per instance
+- [x] `app.schedule({ lock })` — `redisLock` (`@api-kickstart/api-kickstart/redis`) runs a scheduled task once per cluster instead of once per instance
 - [ ] `scopeAudit` can't verify a handler that reads `ctx.scope` but doesn't actually apply it to the query it runs — only "never touched it at all" is detectable without per-adapter query interception
 
 Every adapter and built-in listed above as done is a real implementation, not a placeholder. Contributions welcome, especially on the items still open.

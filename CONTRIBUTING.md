@@ -1,13 +1,15 @@
 # Contributing
 
-## Monorepo structure
+## Repository structure
 
-npm workspaces, two globs:
+Everything ships as a single npm package, `@api-kickstart/api-kickstart`. The workspace is:
 
-- `packages/*` — `api-kickstart` itself (`packages/core`) plus one package per adapter, published as `@kickstart/<name>` (e.g. `@kickstart/express`, `@kickstart/pg`, `@kickstart/zod`).
+- `packages/core` — the only published package. `packages/core/src` holds the core engine (routing, context, auth, authorization, CORS, errors, env, testing, OpenAPI); `packages/core/src/adapters/<name>` holds one directory per adapter (framework, database, broker, validator, storage, logger), each exposed as a subpath export (`@api-kickstart/api-kickstart/<name>`) in `packages/core/package.json`'s `exports` map.
 - `examples/*` — runnable reference apps, not published. `examples/blog-api` is the current one.
 
-Every package has its own `package.json`, `tsconfig.json` (extending the root `tsconfig.base.json`), and `src/` tree. Adapters typically split into `index.ts` (the factory function), `types.ts` (options), and `errors.ts` (mapping the underlying library's errors to `AppError` subclasses) once there's more than one concern to separate.
+Adapters typically split into `index.ts` (the factory function), `types.ts` (options), and `errors.ts` (mapping the underlying library's errors to `AppError` subclasses) once there's more than one concern to separate.
+
+Every adapter's underlying library (`express`, `pg`, `zod`, ...) is an optional `peerDependency` of `@api-kickstart/api-kickstart` — declared in `peerDependencies` + `peerDependenciesMeta` so npm doesn't force-install libraries nobody asked for, and also listed in `devDependencies` so the monorepo itself can build, typecheck, and test every adapter.
 
 ## Setup
 
@@ -15,21 +17,17 @@ Every package has its own `package.json`, `tsconfig.json` (extending the root `t
 npm install
 ```
 
-This installs and links every workspace package, so `@kickstart/express` resolving `import ... from 'api-kickstart'` picks up `packages/core` directly.
-
 ## Common commands
 
 Run from the repo root:
 
 ```sh
-npm run build       # builds packages/core first, then everything else --if-present
-npm run typecheck   # same order, --noEmit
+npm run build       # builds packages/core
+npm run typecheck   # builds packages/core, then typechecks everything --if-present
 npm run lint        # eslint across packages/*/src and examples/*/src
-npm test            # vitest run, across packages/*/src/**/*.test.ts
+npm test            # vitest run, across packages/core/src/**/*.test.ts
 npm run test:watch  # vitest in watch mode
 ```
-
-`build` and `typecheck` build `api-kickstart` first because every adapter package depends on its compiled `dist/` output for types.
 
 ## Code style
 
@@ -42,27 +40,29 @@ ESLint (`npm run lint`) enforces the mechanical parts of this (no unused vars, n
 
 ## Adding a new adapter
 
-1. Copy the shape of an existing adapter of the same kind (a `DbAdapter` from `packages/pg`, a `BrokerAdapter` from `packages/rabbitmq`, a `FrameworkAdapter` from `packages/fastify`, a `Validator` from `packages/zod`) as your starting reference — implement the interface for real against the underlying library, don't stub it.
-2. Give it its own `package.json` (name `@kickstart/<name>`), `tsconfig.json` extending `../../tsconfig.base.json`, and add it to the relevant README section and the `packages/*` workspace glob (already covered — no change needed there).
-3. Normalize the underlying library's errors to the `AppError` subclasses in `api-kickstart/errors` where it has recoverable, typed error codes worth distinguishing.
-4. Run `npm install && npm run build && npm run typecheck && npm run lint` from the root before opening a PR.
-5. Add tests. `packages/core/src/app.test.ts` and the adapter tests in `packages/express`, `packages/http`, `packages/zod`, and `packages/memory` show the pattern: unit-test pure logic directly, and for framework adapters, spin up the real adapter with `createApp()` and hit it with `fetch()` against a real listening port rather than mocking the framework.
+1. Copy the shape of an existing adapter of the same kind (a `DbAdapter` from `packages/core/src/adapters/pg`, a `BrokerAdapter` from `packages/core/src/adapters/rabbitmq`, a `FrameworkAdapter` from `packages/core/src/adapters/fastify`, a `Validator` from `packages/core/src/adapters/zod`) as your starting reference — implement the interface for real against the underlying library, don't stub it.
+2. Create `packages/core/src/adapters/<name>/`, add its underlying library to `peerDependencies` + `peerDependenciesMeta` (optional) and `devDependencies` in `packages/core/package.json`, and add a `./​<name>` entry to its `exports` map pointing at `./dist/adapters/<name>/index.{js,d.ts}`.
+3. Inside the adapter, import from core with relative paths (`../../index.js`, `../../errors.js`, `../../auth/index.js`, `../../builtins/index.js`) — not the package's own name.
+4. Normalize the underlying library's errors to the `AppError` subclasses in `../../errors.js` where it has recoverable, typed error codes worth distinguishing.
+5. Add it to the relevant README table/section.
+6. Run `npm install && npm run build && npm run typecheck && npm run lint` from the root before opening a PR.
+7. Add tests. `packages/core/src/app.test.ts` and the adapter tests in `packages/core/src/adapters/express`, `packages/core/src/adapters/http`, `packages/core/src/adapters/zod`, and `packages/core/src/adapters/memory` show the pattern: unit-test pure logic directly, and for framework adapters, spin up the real adapter with `createApp()` and hit it with `fetch()` against a real listening port rather than mocking the framework.
 
 ## Testing
 
-Vitest resolves `.js`-suffixed relative imports (the NodeNext convention this codebase uses) straight to the sibling `.ts` source files, so tests import from source, not from `dist/`. Test files (`*.test.ts`) and `test-helpers.ts` are excluded from each package's `tsconfig.json` build (`exclude`), so nothing test-related ships in `dist/`.
+Vitest resolves `.js`-suffixed relative imports (the NodeNext convention this codebase uses) straight to the sibling `.ts` source files, so tests import from source, not from `dist/`. Test files (`*.test.ts`) and `test-helpers.ts` are excluded from `packages/core/tsconfig.json`'s build (`exclude`), so nothing test-related ships in `dist/`.
 
 For an integration-style test against a full `App`, use `app.inject()` (see `packages/core/src/testing.ts` and `packages/core/src/app.test.ts`) — it drives `dispatch()` directly and accepts an `as: user` override to skip real authentication.
 
 ## Changesets
 
-Every PR that changes a published package's behavior needs a changeset:
+Every PR that changes published behavior needs a changeset:
 
 ```sh
 npx changeset
 ```
 
-Pick the affected package(s), the semver bump, and write a one-line summary — it becomes the changelog entry. `examples/*` is excluded from versioning (see `.changeset/config.json`).
+Pick `@api-kickstart/api-kickstart`, the semver bump, and write a one-line summary — it becomes the changelog entry. `examples/*` is excluded from versioning (see `.changeset/config.json`).
 
 Maintainers run `npm run version` to apply pending changesets to `package.json`/`CHANGELOG.md`, and `npm run release` to build and publish.
 

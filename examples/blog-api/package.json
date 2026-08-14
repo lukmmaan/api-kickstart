@@ -10,9 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "api-kickstart": "*",
-    "@kickstart/express": "*",
-    "@kickstart/zod": "*",
+    "@api-kickstart/api-kickstart": "*",
+    "express": "^4.19.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
