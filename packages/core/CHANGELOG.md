@@ -1,5 +1,11 @@
 # @api-kickstart/core
 
+## 1.2.0
+
+### Minor Changes
+
+- Add `@api-kickstart/api-kickstart/patterns` — a named registry of common regex patterns (`email`, `url`, `uuid`, `slug`, `alphanumeric`, `username`, `hexColor`, `ipv4`, `ipv6`, `isoDate`, `isoDateTime`, `semver`, `jwt`, `base64`, `phone`), usable with any validator's own pattern support (Zod, Joi, Yup, Valibot, TypeBox). The default `patterns` registry is extensible with `patterns.register(name, regex)` for your own custom named patterns, and `createPatternRegistry()` creates an isolated registry when you don't want to mutate the shared default.
+
 ## 1.1.2
 
 ### Patch Changes

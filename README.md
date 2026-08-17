@@ -55,6 +55,7 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
   - [Valibot](#valibot)
   - [TypeBox](#typebox)
   - [Writing your own validator](#writing-your-own-validator)
+- [Regex patterns](#regex-patterns)
 - [File uploads](#file-uploads)
 - [Routing](#routing)
   - [Single route](#single-route)
@@ -797,6 +798,53 @@ const myValidator: Validator = {
 ```
 
 `SchemaValidationError` (from `@api-kickstart/api-kickstart/errors`) takes an array of `{ path: string; message: string }` and is what turns into the `VALIDATION_ERROR` response shown above.
+
+---
+
+## Regex patterns
+
+A small named registry of common validation regexes, framework-independent — plug them into any validator's own pattern/regex support (Zod's `.regex()`, Joi's `.pattern()`, Yup's `.matches()`, Valibot's `regex()`, or TypeBox's `Type.String({ pattern })` via `.source`):
+
+```ts
+import { patterns } from '@api-kickstart/api-kickstart/patterns'
+import { z } from 'zod'
+
+const schema = z.object({
+  email: z.string().regex(patterns.get('email')),
+  sku: z.string().regex(patterns.get('sku')),   // registered below
+})
+```
+
+Built in (`patterns.list()`): `email`, `url`, `uuid`, `slug`, `alphanumeric`, `username`, `hexColor`, `ipv4`, `ipv6`, `isoDate`, `isoDateTime`, `semver`, `jwt`, `base64`, `phone`.
+
+```ts
+interface PatternRegistry {
+  get(name: string): RegExp        // throws UnknownPatternError if not registered
+  has(name: string): boolean
+  register(name: string, pattern: RegExp): void
+  list(): string[]                  // sorted names
+}
+```
+
+`patterns` (the default export) is a shared, pre-seeded registry — `register()` on it adds a name process-wide, so it's the right place for names your whole app reuses:
+
+```ts
+patterns.register('sku', /^[A-Z]{3}-\d{4}$/)
+patterns.register('postalCodeUS', /^\d{5}(-\d{4})?$/)
+```
+
+For an isolated registry instead (e.g. per-module, or in tests where you don't want to leak custom names globally), use `createPatternRegistry()` — starts empty by default, or pass a seed object to start with your own set instead of the built-ins:
+
+```ts
+import { createPatternRegistry } from '@api-kickstart/api-kickstart/patterns'
+
+const orderPatterns = createPatternRegistry({ orderId: /^ORD-\d{6}$/ })
+orderPatterns.get('orderId')
+```
+
+`patterns.get('unknown-name')` throws `UnknownPatternError` (a plain `Error`, not an `AppError` — this is a programmer mistake to catch in development, not a request-time validation failure) rather than returning `undefined`, so a typo'd pattern name fails loudly at the call site instead of silently producing a schema that matches nothing (or everything).
+
+A couple of the built-ins are deliberately loose rather than exhaustive: `phone` accepts a permissive international digit-count pattern (no universal regex correctly validates every country's phone format — use a dedicated library like `libphonenumber-js` if you need real validation, not just a shape check), and `email`/`url` use the same widely-used pattern browsers use for `<input type="email">`/`<input type="url">`, not the full RFC 5322/3986 grammar.
 
 ---
 
@@ -2127,6 +2175,7 @@ Tests run with `vitest` (`npm test`), linting with `eslint` (`npm run lint`), an
 - [x] `openapi({ serve })` renders a real interactive docs page (Scalar), not just the raw JSON spec again
 - [x] `app.schedule({ lock })` — `redisLock` runs a scheduled task once per cluster instead of once per instance
 - [x] Consolidated from 30 separately published packages into one (`@api-kickstart/api-kickstart`) with adapters as bundled subpath exports — one `npm install`, no picking adapters up front
+- [x] `/patterns` — named registry of common regex patterns (email, UUID, semver, JWT, ...), extensible with your own custom named patterns via `register()`
 - [ ] `scopeAudit` can't verify a handler that reads `ctx.scope` but doesn't actually apply it to the query it runs — only "never touched it at all" is detectable without per-adapter query interception
 - [ ] `app.resource()`'s generated `list` action has no pagination, sorting, or filtering beyond the scope filter
 - [ ] `apiKey()` has no built-in rate limiting — compose it with the `rateLimit` middleware/route option yourself
