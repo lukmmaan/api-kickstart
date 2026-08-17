@@ -56,6 +56,7 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
   - [TypeBox](#typebox)
   - [Writing your own validator](#writing-your-own-validator)
 - [Regex patterns](#regex-patterns)
+- [Date formatting](#date-formatting)
 - [File uploads](#file-uploads)
 - [Routing](#routing)
   - [Single route](#single-route)
@@ -815,7 +816,21 @@ const schema = z.object({
 })
 ```
 
-Built in (`patterns.list()`): `email`, `url`, `uuid`, `slug`, `alphanumeric`, `username`, `hexColor`, `ipv4`, `ipv6`, `isoDate`, `isoDateTime`, `semver`, `jwt`, `base64`, `phone`.
+**112 built in** (`patterns.list()` returns the full sorted list), grouped by category:
+
+| Category | Names |
+|---|---|
+| Identifiers / text case | `email`, `url`, `urlWithoutProtocol`, `domain`, `hostname`, `subdomain`, `slug`, `kebabCase`, `camelCase`, `pascalCase`, `snakeCase`, `constantCase`, `username` |
+| Character classes | `alphanumeric`, `alpha`, `alphaSpaces`, `numeric`, `integer`, `positiveInteger`, `negativeInteger`, `decimal`, `float`, `whitespace`, `noWhitespace` |
+| IDs | `uuid` (v4), `uuidV1`, `uuidV3`, `uuidV5`, `uuidAny`, `nanoid`, `objectId` (MongoDB) |
+| Network | `ipv4`, `ipv6`, `ipv4Cidr`, `ipv6Cidr`, `macAddress`, `port` |
+| Colors | `hexColor`, `rgbColor`, `rgbaColor`, `hslColor` |
+| Security / tokens | `jwt`, `base64`, `base64url`, `md5`, `sha1`, `sha256`, `sha512`, `bearerToken`, `bcryptHash`, `hexadecimal`, `base32`, `base58` |
+| Dates & times | `isoDate`, `isoDateTime`, `isoDateTimeMs`, `isoTime`, `isoWeek`, `usDate`, `euDate`, `dottedDate`, `time24h`, `time12h`, `unixTimestampSeconds`, `unixTimestampMillis`, `yearMonth`, `monthDay`, `cronExpression`, `isoDuration` |
+| Phone / postal / geo | `phone`, `usPhone`, `usPhoneExt`, `ukPhone`, `usZip`, `usZipPlus4`, `canadianPostalCode`, `ukPostalCode`, `latitude`, `longitude`, `geoCoordinate` |
+| Finance / identity | `creditCardVisa`, `creditCardMastercard`, `creditCardAmex`, `creditCardDiscover`, `creditCardGeneric`, `creditCardExpiry`, `cvv`, `iban`, `usSSN`, `usEIN`, `currencyUSD`, `isbn10`, `isbn13` |
+| Dev ecosystem | `semver`, `npmPackageName`, `npmScopedPackageName`, `dockerImageTag`, `gitShortHash`, `gitLongHash`, `environmentVariableName`, `httpHeaderName`, `mimeType` |
+| Misc | `strongPassword`, `htmlTag`, `filePathUnix`, `filePathWindows`, `fileExtension`, `base64Image`, `jsonPointer`, `cssClassName`, `hashtag`, `twitterHandle` |
 
 ```ts
 interface PatternRegistry {
@@ -844,7 +859,79 @@ orderPatterns.get('orderId')
 
 `patterns.get('unknown-name')` throws `UnknownPatternError` (a plain `Error`, not an `AppError` — this is a programmer mistake to catch in development, not a request-time validation failure) rather than returning `undefined`, so a typo'd pattern name fails loudly at the call site instead of silently producing a schema that matches nothing (or everything).
 
-A couple of the built-ins are deliberately loose rather than exhaustive: `phone` accepts a permissive international digit-count pattern (no universal regex correctly validates every country's phone format — use a dedicated library like `libphonenumber-js` if you need real validation, not just a shape check), and `email`/`url` use the same widely-used pattern browsers use for `<input type="email">`/`<input type="url">`, not the full RFC 5322/3986 grammar.
+Several of the built-ins are deliberately loose *shape* checks rather than exhaustive validators — real-world validation for these needs either a live lookup or a dedicated library, not just a regex:
+
+- `phone`/`usPhone`/`ukPhone` — no regex correctly validates every country's numbering plan; use `libphonenumber-js` if you need real validation.
+- `email`/`url` — the same widely-used pattern browsers use for `<input type="email">`/`<input type="url">`, not the full RFC 5322/3986 grammar.
+- `creditCardVisa`/`creditCardMastercard`/`creditCardAmex`/`creditCardDiscover` — check the issuer-prefix and length only, not the Luhn checksum or whether the card actually exists.
+- `usSSN`/`usEIN`/`iban`/`isbn10`/`isbn13` — check format/checksum-adjacent structure, not that the number was actually issued.
+- `cronExpression` — validates the 5-field shape and character set, not that each field's value is in a semantically valid range for its position.
+- `canadianPostalCode` — the letter-exclusion rules follow Canada Post's general pattern, not the full official specification.
+
+---
+
+## Date formatting
+
+```ts
+import { formatDate, formatDateAs, formatDateForDb, DATE_FORMATS } from '@api-kickstart/api-kickstart/dates'
+
+formatDate(new Date(), 'YYYY-MM-DD HH:mm:ss')     // '2024-01-05 09:07:03'
+formatDateAs(new Date(), 'usDate')                 // '01/05/2024', via the named DATE_FORMATS below
+formatDateForDb(new Date(), 'postgres')            // '2024-01-05 09:07:03.045'
+```
+
+`formatDate(date, pattern)` replaces tokens in `pattern` using the `Date`'s **local** time (same convention as `date-fns`/`dayjs`'s `format()`) — pass a UTC-adjusted `Date` yourself if you need UTC output instead:
+
+| Token | Meaning | Example |
+|---|---|---|
+| `YYYY` / `YY` | 4-digit / 2-digit year | `2024` / `24` |
+| `MMMM` / `MMM` / `MM` / `M` | full / short month name, or 2-digit / unpadded month number | `January` / `Jan` / `01` / `1` |
+| `DD` / `D` | 2-digit / unpadded day of month | `05` / `5` |
+| `dddd` / `ddd` | full / short day name | `Friday` / `Fri` |
+| `HH` / `H` | 2-digit / unpadded 24-hour | `09` / `9` |
+| `hh` / `h` | 2-digit / unpadded 12-hour | `09` / `9` |
+| `mm` / `m` | 2-digit / unpadded minute | `07` / `7` |
+| `ss` / `s` | 2-digit / unpadded second | `03` / `3` |
+| `SSS` | 3-digit millisecond | `045` |
+| `A` / `a` | uppercase / lowercase `AM`/`PM` | `AM` / `am` |
+| `Z` / `ZZ` | timezone offset, colon / no colon | `+07:00` / `+0700` |
+
+Any character not matching a token (`-`, `/`, `:`, `,`, spaces, literal `T`, ...) passes through unchanged.
+
+`formatDateAs(date, name)` applies one of the named presets in `DATE_FORMATS` instead of writing the token string yourself:
+
+```ts
+DATE_FORMATS.isoDate           // 'YYYY-MM-DD'
+DATE_FORMATS.isoDateTime       // 'YYYY-MM-DDTHH:mm:ss'
+DATE_FORMATS.isoDateTimeMs     // 'YYYY-MM-DDTHH:mm:ss.SSS'
+DATE_FORMATS.isoDateTimeTz     // 'YYYY-MM-DDTHH:mm:ssZ'
+DATE_FORMATS.usDate            // 'MM/DD/YYYY'
+DATE_FORMATS.usDateTime        // 'MM/DD/YYYY hh:mm A'
+DATE_FORMATS.euDate            // 'DD/MM/YYYY'
+DATE_FORMATS.euDateTime        // 'DD/MM/YYYY HH:mm'
+DATE_FORMATS.dottedDate        // 'DD.MM.YYYY'
+DATE_FORMATS.longDate          // 'MMMM D, YYYY'
+DATE_FORMATS.shortDate         // 'MMM D, YYYY'
+DATE_FORMATS.dayMonthYearDashed // 'DD-MM-YYYY'
+DATE_FORMATS.time24            // 'HH:mm:ss'
+DATE_FORMATS.time24Short       // 'HH:mm'
+DATE_FORMATS.time12            // 'hh:mm:ss A'
+DATE_FORMATS.time12Short       // 'hh:mm A'
+DATE_FORMATS.fullDateTime      // 'dddd, MMMM D, YYYY HH:mm:ss'
+DATE_FORMATS.logTimestamp      // 'YYYY-MM-DD HH:mm:ss.SSS'
+DATE_FORMATS.fileNameSafe      // 'YYYY-MM-DD_HH-mm-ss'
+```
+
+`formatDateForDb(date, dialect)` formats a `Date` the way a given database dialect expects it in a raw query or string column, so you're not hand-rolling `toISOString().slice(...)` per adapter:
+
+| `dialect` | Output format | Example |
+|---|---|---|
+| `'mysql'` / `'sqlite'` | `YYYY-MM-DD HH:mm:ss` | `2024-01-05 09:07:03` |
+| `'postgres'` / `'mssql'` | `YYYY-MM-DD HH:mm:ss.SSS` | `2024-01-05 09:07:03.045` |
+| `'oracle'` | `DD-MON-YYYY` (uppercase) | `05-JAN-2024` |
+| `'mongodb'` | native `Date.prototype.toISOString()` | `2024-01-05T09:07:03.045Z` |
+
+This is a formatter, not a parameterized-query builder — most adapters in this package (`pg`, `knex`, `mongoose`, ...) accept a native `Date` object directly and don't need string formatting at all; reach for `formatDateForDb` specifically when you're building a raw SQL string or need a DB-shaped string for something other than a bound query parameter (a filename, a log line, a CSV export, a legacy column expecting text).
 
 ---
 
@@ -2175,7 +2262,8 @@ Tests run with `vitest` (`npm test`), linting with `eslint` (`npm run lint`), an
 - [x] `openapi({ serve })` renders a real interactive docs page (Scalar), not just the raw JSON spec again
 - [x] `app.schedule({ lock })` — `redisLock` runs a scheduled task once per cluster instead of once per instance
 - [x] Consolidated from 30 separately published packages into one (`@api-kickstart/api-kickstart`) with adapters as bundled subpath exports — one `npm install`, no picking adapters up front
-- [x] `/patterns` — named registry of common regex patterns (email, UUID, semver, JWT, ...), extensible with your own custom named patterns via `register()`
+- [x] `/patterns` — 112 built-in named regex patterns across identifiers, network, security, dates, phone/postal, finance, and dev-ecosystem categories, extensible with your own custom named patterns via `register()`
+- [x] `/dates` — token-based `formatDate()`, 18 named presets via `formatDateAs()`, and `formatDateForDb()` for MySQL/Postgres/SQLite/MongoDB/MSSQL/Oracle-shaped date strings
 - [ ] `scopeAudit` can't verify a handler that reads `ctx.scope` but doesn't actually apply it to the query it runs — only "never touched it at all" is detectable without per-adapter query interception
 - [ ] `app.resource()`'s generated `list` action has no pagination, sorting, or filtering beyond the scope filter
 - [ ] `apiKey()` has no built-in rate limiting — compose it with the `rateLimit` middleware/route option yourself

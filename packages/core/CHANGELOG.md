@@ -1,5 +1,11 @@
 # @api-kickstart/core
 
+## 1.3.0
+
+### Minor Changes
+
+- Expand `@api-kickstart/api-kickstart/patterns` from 15 to 112 built-in named regex patterns, covering identifiers/text-case, character classes, IDs (UUID variants, nanoid, MongoDB ObjectId), network (IPv4/IPv6 + CIDR, MAC address, port), colors, security/tokens (JWT, base64/32/58, hashes, bcrypt), dates & times, phone/postal/geo, finance/identity (card networks, IBAN, SSN, ISBN), dev-ecosystem (semver, npm package names, Docker tags, git hashes), and more. Add `@api-kickstart/api-kickstart/dates` — a token-based `formatDate()` (date-fns/dayjs-style tokens), 18 named format presets via `formatDateAs()`, and `formatDateForDb()` producing the date/timestamp string format each of MySQL, Postgres, SQLite, MongoDB, MSSQL, and Oracle expect.
+
 ## 1.2.0
 
 ### Minor Changes

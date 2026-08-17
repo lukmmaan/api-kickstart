@@ -1,6 +1,6 @@
 {
   "name": "@api-kickstart/api-kickstart",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Auth, authorization, validation, CORS, error handling, database, and message broker, wired together with sane defaults, swappable everywhere.",
   "keywords": [
     "api",
@@ -81,6 +81,10 @@
     "./patterns": {
       "types": "./dist/patterns.d.ts",
       "import": "./dist/patterns.js"
+    },
+    "./dates": {
+      "types": "./dist/dates.d.ts",
+      "import": "./dist/dates.js"
     },
     "./middleware": {
       "types": "./dist/builtins/index.d.ts",

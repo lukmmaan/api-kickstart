@@ -28,6 +28,40 @@ describe('patterns', () => {
     )
   })
 
+  it('ships at least 100 built-in patterns', () => {
+    expect(patterns.list().length).toBeGreaterThanOrEqual(100)
+  })
+
+  it('covers text-case, network, hash, date, phone, finance, and dev-ecosystem patterns correctly', () => {
+    const cases: [string, string, boolean][] = [
+      ['kebabCase', 'my-var-name', true],
+      ['kebabCase', 'MyVar', false],
+      ['camelCase', 'myVarName', true],
+      ['snakeCase', 'my_var_name', true],
+      ['ipv4', '192.168.1.1', true],
+      ['ipv4', '256.1.1.1', false],
+      ['macAddress', '00:1A:2B:3C:4D:5E', true],
+      ['sha256', 'a'.repeat(64), true],
+      ['sha256', 'a'.repeat(63), false],
+      ['isoDate', '2024-01-15', true],
+      ['usDate', '01/15/2024', true],
+      ['unixTimestampSeconds', '1700000000', true],
+      ['usPhone', '(415) 555-2671', true],
+      ['creditCardVisa', '4111111111111111', true],
+      ['creditCardVisa', '5500000000000004', false],
+      ['iban', 'GB82WEST12345698765432', true],
+      ['npmScopedPackageName', '@scope/pkg', true],
+      ['npmScopedPackageName', 'unscoped-pkg', false],
+      ['objectId', '507f1f77bcf86cd799439011', true],
+      ['strongPassword', 'Abcd123!', true],
+      ['strongPassword', 'weak', false],
+    ]
+
+    for (const [name, value, expected] of cases) {
+      expect(patterns.get(name).test(value)).toBe(expected)
+    }
+  })
+
   it('throws UnknownPatternError for a name that was never registered', () => {
     expect(() => patterns.get('does-not-exist')).toThrow(UnknownPatternError)
   })
