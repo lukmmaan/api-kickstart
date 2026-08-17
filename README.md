@@ -130,11 +130,45 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
 
 ```bash
 npm install @api-kickstart/api-kickstart
+npx api-kickstart init
 ```
 
-That's it — one command. Every framework, database, broker, validator, storage, and logging adapter (Express, Fastify, Hono, Koa, NestJS, `pg`, Prisma-compatible, Drizzle, Mongoose, Knex, TypeORM, Sequelize, MongoDB, RabbitMQ, Kafka, Redis, BullMQ, SQS, NATS, MQTT, Pub/Sub, Zod, Joi, Yup, Valibot, TypeBox, S3, Pino, and more) ships bundled as a regular dependency, so it's already in `node_modules` — no separate `npm install express` / `npm install pg` / `npm install zod` afterwards, no picking which ones to install up front. Each adapter is still only *loaded* when you actually `import` its subpath (`@api-kickstart/api-kickstart/express`, `@api-kickstart/api-kickstart/pg`, `@api-kickstart/api-kickstart/zod`, and so on), so unused adapters don't cost you anything at runtime — the tradeoff is a larger `node_modules` on disk in exchange for zero extra install steps.
+`npm install` gets you the core (routing, auth, authorization, validation dispatch, error handling, middleware, CLI — no framework/database/broker libraries pulled in). `npx api-kickstart init` then walks you through picking a framework, database, broker(s), validator, storage, and logger with a short interactive prompt, and installs **only** the packages you picked — so you don't end up with Express *and* Fastify *and* NestJS, or all five validators, sitting unused in `node_modules`:
 
-The one exception is Prisma: `db: prisma(client)` takes any object shaped like a `PrismaClient`, and `@prisma/client` itself has to be generated against *your* schema (`prisma generate`), so it can't be bundled — install and generate it yourself if you use that adapter.
+```
+$ npx api-kickstart init
+api-kickstart init — pick the pieces of your stack; only what you choose gets installed.
+
+Framework: Which HTTP framework do you want to use?
+  1) Express
+  2) Fastify
+  3) Hono
+  4) Koa
+  5) NestJS
+  6) Plain node:http (no framework package needed)
+Enter a number, or press enter to skip: 1
+
+Database: Which database/ORM adapter do you want?
+  ...
+Enter a number, or press enter to skip: 1
+
+Validation: Which validation library do you want?
+  ...
+Enter a number, or press enter to skip: 1
+
+Installing with npm: express@^4.19.0 || ^5.0.0, pg@^8.11.0, zod@^3.23.0, zod-to-json-schema@^3.23.5
+```
+
+Every adapter you didn't pick is still fully implemented and ready — you can always `import` its subpath later, you just need the underlying library installed first. Picked wrong, or need another one mid-project (e.g. you're adding Kafka six months in)? Run it again any time:
+
+```bash
+npx api-kickstart add            # walks through every category again
+npx api-kickstart add broker     # jump straight to one category (framework|database|broker|validation|storage|logging)
+```
+
+`init`/`add` detect npm/yarn/pnpm/bun from whatever lockfile is in the current directory and shell out to the matching install command; both need a real interactive terminal (not piped, not CI) since they prompt. The one adapter neither command installs is Prisma: `db: prisma(client)` takes any object shaped like a `PrismaClient`, and `@prisma/client` has to be generated against *your* schema (`prisma generate`) rather than just installed — do that one yourself.
+
+Prefer to skip the wizard entirely? Every adapter is also listed as an optional peer dependency, so `npm install express pg zod` (or whatever you need) works exactly like installing any other library with peer deps.
 
 ---
 
@@ -704,7 +738,7 @@ import { z } from 'zod'
 createApp({ validator: zod() })
 ```
 
-**Types flow through** — `ctx.body`/`ctx.query`/`ctx.params` are fully typed from the Zod schema, no manual interface, no casting. `toJsonSchema` delegates to `zod-to-json-schema` (bundled as a regular dependency, so no separate install) with `target: 'openApi3'`. Uses: `zod` (`^3.23.0`).
+**Types flow through** — `ctx.body`/`ctx.query`/`ctx.params` are fully typed from the Zod schema, no manual interface, no casting. `toJsonSchema` delegates to `zod-to-json-schema` (installed alongside `zod` if you pick it via `npx api-kickstart init`/`add`) with `target: 'openApi3'`. Uses: `zod` (`^3.23.0`).
 
 ### Joi
 
@@ -2107,7 +2141,7 @@ import { hono } from '@api-kickstart/api-kickstart/hono'
 framework: hono()   // or: hono({ app: existingHonoApp })
 ```
 
-`hono(options?: { app?: Hono }): FrameworkAdapter`. Runs on Node via `@hono/node-server` (bundled as a regular dependency of the package, so it's always installed — no separate `npm install` needed for it specifically). Works equally on Bun, Deno, and Cloudflare Workers when you drive `app.handler()` yourself instead of calling `.listen()`.
+`hono(options?: { app?: Hono }): FrameworkAdapter`. Runs on Node via `@hono/node-server` (installed alongside `hono` if you pick it via `npx api-kickstart init`/`add`). Works equally on Bun, Deno, and Cloudflare Workers when you drive `app.handler()` yourself instead of calling `.listen()`.
 
 ### Koa
 
@@ -2299,7 +2333,7 @@ expect(app.broker.published).toContainEqual(
 
 ## CLI
 
-Every command reads a config file — `api-kickstart.config.mjs` in the current directory by default, or `--config <path>`:
+`init` and `add` are the odd ones out — they run before you have an `App` (or even a framework installed) and don't touch a config file at all; see [Install](#install) for what they do. Every other command reads a config file — `api-kickstart.config.mjs` in the current directory by default, or `--config <path>`:
 
 ```ts
 // api-kickstart.config.mjs
@@ -2313,6 +2347,9 @@ export { envSchema }
 `app` can also be a function (sync or async) returning an `App`, if constructing it has side effects you'd rather defer.
 
 ```bash
+npx api-kickstart init                                 # interactively pick + install framework/db/broker/validator/storage/logging
+npx api-kickstart add                                  # same wizard, for adding more to an existing project
+npx api-kickstart add broker                            # jump straight to one category
 npx api-kickstart doctor                              # run the production checklist, exit 1 on any failure
 npx api-kickstart env:example                          # write .env.example from envSchema
 npx api-kickstart env:example --out .env.sample         # custom output path
@@ -2324,6 +2361,8 @@ npx api-kickstart <command> --config ./path/to/config.mjs
 
 | Command | What it does |
 |---|---|
+| `init` | interactively picks a framework/database/broker(s)/validator/storage/logger and installs exactly those packages — see [Install](#install) |
+| `add [category]` | the same wizard, for adding more later; an optional category (`framework`, `database`, `broker`, `validation`, `storage`, `logging`) skips straight to it |
 | `doctor` | runs the [production checklist](#production-checklist) against your `App`, exits `1` if any check fails |
 | `env:example` | writes a `.env.example` derived from `envSchema` exported by your config file |
 | `routes` | prints every registered route (method, path, auth, roles, scope) from `app.routes()` |
@@ -2373,7 +2412,7 @@ Use them if they fit. They handle authentication well and stop there. This cover
 No. Every option is optional. Use it for auth and scope only, or as a broker consumer runner with no HTTP at all.
 
 **Do I have to install every adapter's dependency?**
-No — see [Install](#install). Every adapter's underlying library ships bundled with the package; `npm install @api-kickstart/api-kickstart` is the only install step, for anything you use.
+No, and you no longer have to type the install commands by hand either — see [Install](#install). `npm install @api-kickstart/api-kickstart` gets you the framework-agnostic core; `npx api-kickstart init` (or `add` later) prompts for which framework/database/broker/validator/storage/logger you want and installs only those.
 
 **Is it safe to write my own auth?**
 Not the cryptography, and this package doesn't. `jose` handles JWT signing/verification, `node:crypto`'s `scrypt` handles password hashing. What's here is the wiring around them, which is where most real bugs live.
@@ -2430,7 +2469,7 @@ Tests run with `vitest` (`npm test`), linting with `eslint` (`npm run lint`), an
 - [x] `auditLog()` — structured "who did what" middleware, pluggable sink
 - [x] `openapi({ serve })` renders a real interactive docs page (Scalar), not just the raw JSON spec again
 - [x] `app.schedule({ lock })` — `redisLock`/`pgLock`/`knexLock`/`mongodbLock`/`memoryLock` run a scheduled task once per cluster (or once per process for `memoryLock`) instead of once per instance
-- [x] Consolidated from 30 separately published packages into one (`@api-kickstart/api-kickstart`) with adapters as bundled subpath exports — one `npm install`, no picking adapters up front
+- [x] Consolidated from 30 separately published packages into one (`@api-kickstart/api-kickstart`) with adapters as subpath exports; `npx api-kickstart init`/`add` prompts for which ones you need and installs only those, instead of hand-typing `npm install express pg zod ...` or bundling every adapter's dependency unconditionally
 - [x] `/patterns` — 112 built-in named regex patterns across identifiers, network, security, dates, phone/postal, finance, and dev-ecosystem categories, extensible with your own custom named patterns via `register()`
 - [x] `/dates` — token-based `formatDate()`, 18 named presets via `formatDateAs()`, and `formatDateForDb()` for MySQL/Postgres/SQLite/MongoDB/MSSQL/Oracle-shaped date strings
 - [x] `/i18n` — `createI18n()` middleware detects locale from a query param, cookie, or `Accept-Language` header (with quality-value parsing and base-language fallback), plus a dictionary-based `t()` translator with `{param}` interpolation and per-key default-locale fallback; `createTranslator()` for the same translation logic without request detection; `TranslationStore` (`pgTranslationStore`/`knexTranslationStore`/`mongodbTranslationStore`/`redisTranslationStore`/`memoryTranslationStore`) loads dictionaries from a db, Redis, or an explicit constant instead of hardcoding them

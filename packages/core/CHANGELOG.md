@@ -1,5 +1,13 @@
 # @api-kickstart/core
 
+## 2.0.0
+
+### Major Changes
+
+- **Breaking:** every adapter's underlying library (`express`, `pg`, `zod`, `@nestjs/*`, and the rest — everything except `jose`, which the core `auth` module needs unconditionally) is no longer a bundled regular `dependency`. `npm install @api-kickstart/api-kickstart` now installs only the framework-agnostic core; a fresh install no longer pulls in all ~37 adapter libraries (previously ~586 transitive packages / ~245MB regardless of which adapters you actually used).
+  
+  Instead, run `npx api-kickstart init` right after installing: it interactively prompts for your framework, database, broker(s), validator, storage, and logger, and installs only the packages you pick. Run `npx api-kickstart add` (optionally `add <category>`, e.g. `add broker`) any time later to add more. Every adapter library is still declared as an optional `peerDependency`, so `npm install express pg zod` (or whatever you need) by hand works too if you'd rather skip the wizard — nothing about the adapters themselves changed, only how their dependencies get installed.
+
 ## 1.7.0
 
 ### Minor Changes

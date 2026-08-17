@@ -11,7 +11,7 @@ Everything ships as a single npm package, `@api-kickstart/api-kickstart`. The wo
 
 Adapters typically split into `index.ts` (the factory function), `types.ts` (options), and `errors.ts` (mapping the underlying library's errors to `AppError` subclasses) once there's more than one concern to separate.
 
-Every adapter's underlying library (`express`, `pg`, `zod`, ...) is a regular `dependency` of `@api-kickstart/api-kickstart` — bundled so `npm install @api-kickstart/api-kickstart` is the only install step consumers need, for any adapter they use. Prisma is the one exception (see the README's [Install](./README.md#install) section) since `@prisma/client` has to be generated against the consumer's own schema.
+Every adapter's underlying library (`express`, `pg`, `zod`, ...) is an optional `peerDependency` of `@api-kickstart/api-kickstart`, listed in `packages/core/src/cli/stack.ts` and installed on demand by `npx api-kickstart init`/`add` (see the README's [Install](./README.md#install) section) rather than bundled unconditionally — a consumer using only Express + Postgres + Zod shouldn't also get NestJS, Kafka, and every other validator in `node_modules`. Prisma is the one exception with no peer dependency at all, since `@prisma/client` has to be generated against the consumer's own schema.
 
 ## Setup
 
@@ -43,7 +43,7 @@ ESLint (`npm run lint`) enforces the mechanical parts of this (no unused vars, n
 ## Adding a new adapter
 
 1. Copy the shape of an existing adapter of the same kind (a `DbAdapter` from `packages/core/src/adapters/pg`, a `BrokerAdapter` from `packages/core/src/adapters/rabbitmq`, a `FrameworkAdapter` from `packages/core/src/adapters/fastify`, a `Validator` from `packages/core/src/adapters/zod`) as your starting reference — implement the interface for real against the underlying library, don't stub it.
-2. Create `packages/core/src/adapters/<name>/`, add its underlying library to `dependencies` in `packages/core/package.json` (so consumers get it automatically — see [Repository structure](#repository-structure) above), and add a `./​<name>` entry to its `exports` map pointing at `./dist/adapters/<name>/index.{js,d.ts}`.
+2. Create `packages/core/src/adapters/<name>/`, add its underlying library to `peerDependencies` + `peerDependenciesMeta` (`optional: true`) in `packages/core/package.json`, add a matching entry to `STACK_CATEGORIES` in `packages/core/src/cli/stack.ts` so `init`/`add` can install it (see [Repository structure](#repository-structure) above), and add a `./​<name>` entry to its `exports` map pointing at `./dist/adapters/<name>/index.{js,d.ts}`.
 3. Inside the adapter, import from core with relative paths (`../../index.js`, `../../errors.js`, `../../auth/index.js`, `../../builtins/index.js`) — not the package's own name.
 4. Normalize the underlying library's errors to the `AppError` subclasses in `../../errors.js` where it has recoverable, typed error codes worth distinguishing.
 5. Add it to the relevant README table/section.

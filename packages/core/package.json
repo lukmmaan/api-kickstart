@@ -1,6 +1,6 @@
 {
   "name": "@api-kickstart/api-kickstart",
-  "version": "1.7.0",
+  "version": "2.0.0",
   "description": "Auth, authorization, validation, CORS, error handling, database, and message broker, wired together with sane defaults, swappable everywhere.",
   "keywords": [
     "api",
@@ -230,7 +230,9 @@
     "prepack": "cp ../../README.md ./README.md && cp ../../LICENSE ./LICENSE"
   },
   "dependencies": {
-    "jose": "^5.9.6",
+    "jose": "^5.9.6"
+  },
+  "peerDependencies": {
     "@hono/node-server": "^1.13.0",
     "koa-bodyparser": "^4.4.1",
     "zod-to-json-schema": "^3.23.5",
@@ -269,6 +271,46 @@
     "yup": "^1.4.0",
     "@sodaru/yup-to-json-schema": "^2.0.1",
     "zod": "^3.23.0"
+  },
+  "peerDependenciesMeta": {
+    "@hono/node-server": { "optional": true },
+    "koa-bodyparser": { "optional": true },
+    "zod-to-json-schema": { "optional": true },
+    "bullmq": { "optional": true },
+    "drizzle-orm": { "optional": true },
+    "express": { "optional": true },
+    "fastify": { "optional": true },
+    "hono": { "optional": true },
+    "joi": { "optional": true },
+    "joi-to-json": { "optional": true },
+    "kafkajs": { "optional": true },
+    "knex": { "optional": true },
+    "koa": { "optional": true },
+    "mongodb": { "optional": true },
+    "mongoose": { "optional": true },
+    "mqtt": { "optional": true },
+    "nats": { "optional": true },
+    "@nestjs/common": { "optional": true },
+    "@nestjs/core": { "optional": true },
+    "@nestjs/platform-express": { "optional": true },
+    "reflect-metadata": { "optional": true },
+    "rxjs": { "optional": true },
+    "pg": { "optional": true },
+    "pino": { "optional": true },
+    "@google-cloud/pubsub": { "optional": true },
+    "amqplib": { "optional": true },
+    "ioredis": { "optional": true },
+    "@aws-sdk/client-s3": { "optional": true },
+    "@aws-sdk/s3-request-presigner": { "optional": true },
+    "sequelize": { "optional": true },
+    "@aws-sdk/client-sqs": { "optional": true },
+    "@sinclair/typebox": { "optional": true },
+    "typeorm": { "optional": true },
+    "valibot": { "optional": true },
+    "@valibot/to-json-schema": { "optional": true },
+    "yup": { "optional": true },
+    "@sodaru/yup-to-json-schema": { "optional": true },
+    "zod": { "optional": true }
   },
   "devDependencies": {
     "typescript": "^5.5.4",
