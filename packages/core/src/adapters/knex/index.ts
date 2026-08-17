@@ -3,6 +3,8 @@ import type { DbAdapter, ScopeFilter } from '../../index.js'
 import { normalizeKnexError } from './errors.js'
 
 export { knexOutboxStore, type KnexOutboxStoreOptions } from './outbox.js'
+export { knexLock, type KnexLockOptions } from './lock.js'
+export { knexTranslationStore, type KnexTranslationStoreOptions } from './i18n.js'
 
 export function knex(client: Knex): DbAdapter {
   return {

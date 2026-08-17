@@ -1,11 +1,14 @@
 import { Pool, type PoolClient, type PoolConfig } from 'pg'
 import type { DbAdapter } from '../../index.js'
 import { normalizePgError } from './errors.js'
+import { pgLock, type PgLockOptions } from './lock.js'
 import { pgOutboxStore, type PgOutboxStoreOptions } from './outbox.js'
 import { translateScope, type PgScopeQuery } from './scope.js'
 
 export type { PgScopeQuery }
 export { pgOutboxStore, type PgOutboxStoreOptions }
+export { pgLock, type PgLockOptions }
+export { pgTranslationStore, type PgTranslationStoreOptions } from './i18n.js'
 
 export function pg(configOrPool: PoolConfig | Pool): DbAdapter {
   const pool = configOrPool instanceof Pool ? configOrPool : new Pool(configOrPool)

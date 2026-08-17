@@ -55,6 +55,9 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
   - [Valibot](#valibot)
   - [TypeBox](#typebox)
   - [Writing your own validator](#writing-your-own-validator)
+- [Regex patterns](#regex-patterns)
+- [Date formatting](#date-formatting)
+- [Internationalization (i18n)](#internationalization-i18n)
 - [File uploads](#file-uploads)
 - [Routing](#routing)
   - [Single route](#single-route)
@@ -98,7 +101,8 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
   - [Writing your own storage adapter](#writing-your-own-storage-adapter)
 - [Logging](#logging)
   - [Writing your own logger](#writing-your-own-logger)
-- [Redis-backed stores and lock](#redis-backed-stores-and-lock)
+- [Redis-backed stores](#redis-backed-stores)
+- [Distributed locks](#distributed-locks)
 - [Webhooks](#webhooks)
 - [Framework adapters](#framework-adapters)
   - [Express](#express)
@@ -352,7 +356,7 @@ interface SessionStore {
 }
 ```
 
-`memoryStore()` (imported from the same `/auth` subpath) is the built-in in-memory implementation, useful for local dev and tests. For anything that needs to survive a restart or run behind more than one instance, use `redisSessionStore()` from [Redis-backed stores](#redis-backed-stores-and-lock), or implement `SessionStore` against your own database.
+`memoryStore()` (imported from the same `/auth` subpath) is the built-in in-memory implementation, useful for local dev and tests. For anything that needs to survive a restart or run behind more than one instance, use `redisSessionStore()` from [Redis-backed stores](#redis-backed-stores), or implement `SessionStore` against your own database.
 
 Session IDs are regenerated (`randomUUID()`) every time `create()` is called — i.e. on every login — to prevent session fixation.
 
@@ -800,6 +804,273 @@ const myValidator: Validator = {
 
 ---
 
+## Regex patterns
+
+A small named registry of common validation regexes, framework-independent — plug them into any validator's own pattern/regex support (Zod's `.regex()`, Joi's `.pattern()`, Yup's `.matches()`, Valibot's `regex()`, or TypeBox's `Type.String({ pattern })` via `.source`):
+
+```ts
+import { patterns } from '@api-kickstart/api-kickstart/patterns'
+import { z } from 'zod'
+
+const schema = z.object({
+  email: z.string().regex(patterns.get('email')),
+  sku: z.string().regex(patterns.get('sku')),   // registered below
+})
+```
+
+**112 built in** (`patterns.list()` returns the full sorted list), grouped by category:
+
+| Category | Names |
+|---|---|
+| Identifiers / text case | `email`, `url`, `urlWithoutProtocol`, `domain`, `hostname`, `subdomain`, `slug`, `kebabCase`, `camelCase`, `pascalCase`, `snakeCase`, `constantCase`, `username` |
+| Character classes | `alphanumeric`, `alpha`, `alphaSpaces`, `numeric`, `integer`, `positiveInteger`, `negativeInteger`, `decimal`, `float`, `whitespace`, `noWhitespace` |
+| IDs | `uuid` (v4), `uuidV1`, `uuidV3`, `uuidV5`, `uuidAny`, `nanoid`, `objectId` (MongoDB) |
+| Network | `ipv4`, `ipv6`, `ipv4Cidr`, `ipv6Cidr`, `macAddress`, `port` |
+| Colors | `hexColor`, `rgbColor`, `rgbaColor`, `hslColor` |
+| Security / tokens | `jwt`, `base64`, `base64url`, `md5`, `sha1`, `sha256`, `sha512`, `bearerToken`, `bcryptHash`, `hexadecimal`, `base32`, `base58` |
+| Dates & times | `isoDate`, `isoDateTime`, `isoDateTimeMs`, `isoTime`, `isoWeek`, `usDate`, `euDate`, `dottedDate`, `time24h`, `time12h`, `unixTimestampSeconds`, `unixTimestampMillis`, `yearMonth`, `monthDay`, `cronExpression`, `isoDuration` |
+| Phone / postal / geo | `phone`, `usPhone`, `usPhoneExt`, `ukPhone`, `usZip`, `usZipPlus4`, `canadianPostalCode`, `ukPostalCode`, `latitude`, `longitude`, `geoCoordinate` |
+| Finance / identity | `creditCardVisa`, `creditCardMastercard`, `creditCardAmex`, `creditCardDiscover`, `creditCardGeneric`, `creditCardExpiry`, `cvv`, `iban`, `usSSN`, `usEIN`, `currencyUSD`, `isbn10`, `isbn13` |
+| Dev ecosystem | `semver`, `npmPackageName`, `npmScopedPackageName`, `dockerImageTag`, `gitShortHash`, `gitLongHash`, `environmentVariableName`, `httpHeaderName`, `mimeType` |
+| Misc | `strongPassword`, `htmlTag`, `filePathUnix`, `filePathWindows`, `fileExtension`, `base64Image`, `jsonPointer`, `cssClassName`, `hashtag`, `twitterHandle` |
+
+```ts
+interface PatternRegistry {
+  get(name: string): RegExp        // throws UnknownPatternError if not registered
+  has(name: string): boolean
+  register(name: string, pattern: RegExp): void
+  list(): string[]                  // sorted names
+}
+```
+
+`patterns` (the default export) is a shared, pre-seeded registry — `register()` on it adds a name process-wide, so it's the right place for names your whole app reuses:
+
+```ts
+patterns.register('sku', /^[A-Z]{3}-\d{4}$/)
+patterns.register('postalCodeUS', /^\d{5}(-\d{4})?$/)
+```
+
+For an isolated registry instead (e.g. per-module, or in tests where you don't want to leak custom names globally), use `createPatternRegistry()` — starts empty by default, or pass a seed object to start with your own set instead of the built-ins:
+
+```ts
+import { createPatternRegistry } from '@api-kickstart/api-kickstart/patterns'
+
+const orderPatterns = createPatternRegistry({ orderId: /^ORD-\d{6}$/ })
+orderPatterns.get('orderId')
+```
+
+`patterns.get('unknown-name')` throws `UnknownPatternError` (a plain `Error`, not an `AppError` — this is a programmer mistake to catch in development, not a request-time validation failure) rather than returning `undefined`, so a typo'd pattern name fails loudly at the call site instead of silently producing a schema that matches nothing (or everything).
+
+Several of the built-ins are deliberately loose *shape* checks rather than exhaustive validators — real-world validation for these needs either a live lookup or a dedicated library, not just a regex:
+
+- `phone`/`usPhone`/`ukPhone` — no regex correctly validates every country's numbering plan; use `libphonenumber-js` if you need real validation.
+- `email`/`url` — the same widely-used pattern browsers use for `<input type="email">`/`<input type="url">`, not the full RFC 5322/3986 grammar.
+- `creditCardVisa`/`creditCardMastercard`/`creditCardAmex`/`creditCardDiscover` — check the issuer-prefix and length only, not the Luhn checksum or whether the card actually exists.
+- `usSSN`/`usEIN`/`iban`/`isbn10`/`isbn13` — check format/checksum-adjacent structure, not that the number was actually issued.
+- `cronExpression` — validates the 5-field shape and character set, not that each field's value is in a semantically valid range for its position.
+- `canadianPostalCode` — the letter-exclusion rules follow Canada Post's general pattern, not the full official specification.
+
+---
+
+## Date formatting
+
+```ts
+import { formatDate, formatDateUTC, formatDateAs, formatDateAsUTC, formatDateForDb, DATE_FORMATS } from '@api-kickstart/api-kickstart/dates'
+
+formatDate(new Date(), 'YYYY-MM-DD HH:mm:ss')      // local time, e.g. '2024-01-05 09:07:03'
+formatDateUTC(new Date(), 'YYYY-MM-DD HH:mm:ss')   // UTC, e.g. '2024-01-05 02:07:03'
+formatDateAs(new Date(), 'usDate')                 // '01/05/2024', via the named DATE_FORMATS below
+formatDateAsUTC(new Date(), 'isoDateTimeTz')       // same presets, UTC fields + '+00:00' offset
+formatDateForDb(new Date(), 'postgres')            // UTC by default, e.g. '2024-01-05 02:07:03.045'
+```
+
+`formatDate(date, pattern)` replaces tokens in `pattern` using the `Date`'s **local** (server) time (same convention as `date-fns`/`dayjs`'s `format()`). `formatDateUTC(date, pattern)` is the same token replacement but reads every field — year, month, day, hour, day-of-week, and the `Z`/`ZZ` offset — off the `Date`'s UTC representation instead, so output is identical no matter what timezone the process runs in. `formatDateAs`/`formatDateAsUTC` are the local/UTC counterparts for the named presets below:
+
+| Token | Meaning | Example |
+|---|---|---|
+| `YYYY` / `YY` | 4-digit / 2-digit year | `2024` / `24` |
+| `MMMM` / `MMM` / `MM` / `M` | full / short month name, or 2-digit / unpadded month number | `January` / `Jan` / `01` / `1` |
+| `DD` / `D` | 2-digit / unpadded day of month | `05` / `5` |
+| `dddd` / `ddd` | full / short day name | `Friday` / `Fri` |
+| `HH` / `H` | 2-digit / unpadded 24-hour | `09` / `9` |
+| `hh` / `h` | 2-digit / unpadded 12-hour | `09` / `9` |
+| `mm` / `m` | 2-digit / unpadded minute | `07` / `7` |
+| `ss` / `s` | 2-digit / unpadded second | `03` / `3` |
+| `SSS` | 3-digit millisecond | `045` |
+| `A` / `a` | uppercase / lowercase `AM`/`PM` | `AM` / `am` |
+| `Z` / `ZZ` | timezone offset, colon / no colon | `+07:00` / `+0700` |
+
+Any character not matching a token (`-`, `/`, `:`, `,`, spaces, literal `T`, ...) passes through unchanged.
+
+`formatDateAs(date, name)` applies one of the named presets in `DATE_FORMATS` instead of writing the token string yourself:
+
+```ts
+DATE_FORMATS.isoDate           // 'YYYY-MM-DD'
+DATE_FORMATS.isoDateTime       // 'YYYY-MM-DDTHH:mm:ss'
+DATE_FORMATS.isoDateTimeMs     // 'YYYY-MM-DDTHH:mm:ss.SSS'
+DATE_FORMATS.isoDateTimeTz     // 'YYYY-MM-DDTHH:mm:ssZ'
+DATE_FORMATS.usDate            // 'MM/DD/YYYY'
+DATE_FORMATS.usDateTime        // 'MM/DD/YYYY hh:mm A'
+DATE_FORMATS.euDate            // 'DD/MM/YYYY'
+DATE_FORMATS.euDateTime        // 'DD/MM/YYYY HH:mm'
+DATE_FORMATS.dottedDate        // 'DD.MM.YYYY'
+DATE_FORMATS.longDate          // 'MMMM D, YYYY'
+DATE_FORMATS.shortDate         // 'MMM D, YYYY'
+DATE_FORMATS.dayMonthYearDashed // 'DD-MM-YYYY'
+DATE_FORMATS.time24            // 'HH:mm:ss'
+DATE_FORMATS.time24Short       // 'HH:mm'
+DATE_FORMATS.time12            // 'hh:mm:ss A'
+DATE_FORMATS.time12Short       // 'hh:mm A'
+DATE_FORMATS.fullDateTime      // 'dddd, MMMM D, YYYY HH:mm:ss'
+DATE_FORMATS.logTimestamp      // 'YYYY-MM-DD HH:mm:ss.SSS'
+DATE_FORMATS.fileNameSafe      // 'YYYY-MM-DD_HH-mm-ss'
+```
+
+`formatDateForDb(date, dialect, options?)` formats a `Date` the way a given database dialect expects it in a raw query or string column, so you're not hand-rolling `toISOString().slice(...)` per adapter:
+
+| `dialect` | Output format | Example (UTC) |
+|---|---|---|
+| `'mysql'` / `'sqlite'` | `YYYY-MM-DD HH:mm:ss` | `2024-01-05 09:07:03` |
+| `'postgres'` / `'mssql'` | `YYYY-MM-DD HH:mm:ss.SSS` | `2024-01-05 09:07:03.045` |
+| `'oracle'` | `DD-MON-YYYY` (uppercase) | `05-JAN-2024` |
+| `'mongodb'` | native `Date.prototype.toISOString()` | `2024-01-05T09:07:03.045Z` |
+
+**`formatDateForDb` defaults to UTC** for every dialect (`mongodb` already did, via `toISOString()`) — a raw date string headed for a database shouldn't silently depend on whatever timezone the server process happens to run in. Pass `{ utc: false }` to opt back into the process's local time instead:
+
+```ts
+formatDateForDb(new Date(), 'mysql')                    // UTC (default)
+formatDateForDb(new Date(), 'mysql', { utc: false })     // local server time
+```
+
+This is a formatter, not a parameterized-query builder — most adapters in this package (`pg`, `knex`, `mongoose`, ...) accept a native `Date` object directly and don't need string formatting at all; reach for `formatDateForDb` specifically when you're building a raw SQL string or need a DB-shaped string for something other than a bound query parameter (a filename, a log line, a CSV export, a legacy column expecting text).
+
+---
+
+## Internationalization (i18n)
+
+Dictionary-based translation, plus a middleware that figures out which locale a client wants — from a query param, a cookie, or the standard `Accept-Language` header — with a configured default when none of them say anything usable.
+
+```ts
+import { createI18n } from '@api-kickstart/api-kickstart/i18n'
+
+const i18n = createI18n({
+  locales: ['en', 'id', 'ja'],
+  defaultLocale: 'en',
+  dictionaries: {
+    en: { greeting: 'Hello, {name}!', errors: { notFound: 'Not found' } },
+    id: { greeting: 'Halo, {name}!', errors: { notFound: 'Tidak ditemukan' } },
+    ja: { greeting: 'こんにちは、{name}さん!' },   // falls back to English for keys it doesn't have
+  },
+})
+
+createApp({
+  framework: express(),
+  middleware: [i18n.middleware],
+})
+
+app.route({
+  method: 'GET',
+  path: '/greet',
+  auth: false,
+  handler: async (ctx) => ({ message: i18n.t('greeting', { name: ctx.user?.id ?? 'Guest' }) }),
+})
+```
+
+### Locale detection
+
+`I18nOptions` reference:
+
+| Field | Type | Notes |
+|---|---|---|
+| `locales` | `string[]` | **required** — every locale the app actually supports; anything else falls back to `defaultLocale` |
+| `defaultLocale` | `string` | **required** — used when detection finds nothing, or finds a locale not in `locales` |
+| `dictionaries` | `Record<string, TranslationDictionary>` | **required** — one nested key→string tree per locale, see below |
+| `detect` | `('query' \| 'cookie' \| 'header')[]` | optional, default `['query', 'cookie', 'header']` — first source that resolves to a supported locale wins |
+| `queryParam` | `string` | optional, default `'lang'` — e.g. `?lang=id` |
+| `cookieName` | `string` | optional, default `'locale'` |
+| `headerName` | `string` | optional, default `'accept-language'` — parsed per the real HTTP spec, including `q=` quality values (`Accept-Language: fr-FR,id;q=0.9,en;q=0.8` picks `id` over `en` if `fr` isn't supported) and region-qualified tags falling back to their base language (`id-ID` matches a configured `id`) |
+
+The middleware also stamps the resolved locale onto the `content-language` response header, and makes it available anywhere in that request's call stack — including deep inside services or model hooks, the same way `currentUser()` works — via `currentLocale()`:
+
+```ts
+import { currentLocale } from '@api-kickstart/api-kickstart/i18n'
+
+// deep inside a service, no ctx threaded through
+const locale = currentLocale()   // 'id', or null outside a request
+```
+
+`i18n.locale()` is the same thing scoped to one `I18n` instance, falling back to `defaultLocale` instead of `null` when called outside a request.
+
+### Translation
+
+```ts
+interface TranslationDictionary {
+  [key: string]: string | TranslationDictionary
+}
+```
+
+Dictionaries nest — `i18n.t('errors.notFound')` looks up `dictionaries[locale].errors.notFound`. Values support `{param}` interpolation:
+
+```ts
+i18n.t('greeting', { name: 'Alice' })            // uses the current request's detected locale
+i18n.t('greeting', { name: 'Alice' }, 'id')       // explicit locale, ignores the request
+```
+
+Resolution order for `t(key, params?, locale?)`: the explicit `locale` argument, else `currentLocale()` (the request's detected locale), else `defaultLocale`. If the key is missing in that locale's dictionary, it falls back to `defaultLocale`'s dictionary — so you don't have to translate every string into every locale on day one (see `ja` only having `greeting` in the example above). If the key is missing everywhere, `t()` returns the key itself rather than throwing or returning something empty — the same "fail visibly, not silently" instinct as the rest of this package, since a raw key showing up in a response is an obvious, greppable bug.
+
+`i18n.addDictionary(locale, dictionary)` registers a locale after the fact (e.g. loading translations from a database or a CMS at startup instead of hardcoding them).
+
+### Standalone translator
+
+If you don't need request-based locale detection at all — a broker consumer, a CLI script, a scheduled task — `createTranslator()` gives you just the dictionary/interpolation/fallback logic without the middleware or `Context` dependency:
+
+```ts
+import { createTranslator } from '@api-kickstart/api-kickstart/i18n'
+
+const translator = createTranslator({ locales: ['en', 'id'], defaultLocale: 'en', dictionaries })
+translator.t('greeting', { name: 'Alice' }, 'id')   // locale must be passed explicitly — no request to detect it from
+```
+
+`createI18n()` is built on top of `createTranslator()` internally, so both share the exact same lookup/interpolation/fallback behavior.
+
+### Where dictionaries come from
+
+Passing a `dictionaries` object (as in every example above) hardcodes your translations into the deploy — fine for a handful of locales, less fine once translators or an admin need to update copy without a release. `TranslationStore` is the pluggable alternative: a **db** table (any SQL dialect via `knex`, or `pg` directly, or `mongodb`), **redis**, or an explicit in-memory **constant** — all behind the same interface:
+
+```ts
+interface TranslationStore {
+  loadAll(): Promise<Record<string, TranslationDictionary>>
+  set(locale: string, key: string, value: string): Promise<void>
+}
+```
+
+`createTranslatorFromStore(store, options)` / `createI18nFromStore(store, options)` are async versions of `createTranslator`/`createI18n` — same `options` minus `dictionaries`, which gets loaded from the store instead:
+
+```ts
+import { createI18nFromStore } from '@api-kickstart/api-kickstart/i18n'
+import { pgTranslationStore } from '@api-kickstart/api-kickstart/pg'
+
+const store = pgTranslationStore(pgPool)
+await store.set('en', 'greeting', 'Hello, {name}!')   // e.g. from an admin panel
+await store.set('id', 'greeting', 'Halo, {name}!')
+
+const i18n = await createI18nFromStore(store, { locales: ['en', 'id'], defaultLocale: 'en' })
+```
+
+| Factory | Backend | Signature | Storage |
+|---|---|---|---|
+| `pgTranslationStore(pool, options?)` | Postgres | `(pool: Pool, options: PgTranslationStoreOptions = {}) => TranslationStore` | lazily creates a `_api_kickstart_translations(locale, key, value)` table, `PRIMARY KEY (locale, key)` |
+| `knexTranslationStore(client, options?)` | any SQL dialect knex supports | `(client: Knex, options: KnexTranslationStoreOptions = {}) => TranslationStore` | same shape, portable across `mysql`, `sqlite`, `mssql`, and more |
+| `mongodbTranslationStore(db, options?)` | MongoDB | `(db: Db, options: MongodbTranslationStoreOptions = {}) => TranslationStore` | one document per `{ locale, key, value }`, upserted by `set()` |
+| `redisTranslationStore(options)` | Redis | `(options: RedisTranslationStoreOptions) => TranslationStore` | one hash per locale (`<prefix>i18n:<locale>`), dot-path key as the hash field; **requires `locales: string[]`** in `options` — Redis has no cheap "list every locale" scan |
+| `memoryTranslationStore(initial?)` | none (in-process) | `(initial: Record<string, TranslationDictionary> = {}) => TranslationStore` | the explicit "constant" backend — same effect as passing `dictionaries` directly, but through the `TranslationStore` interface so it's swappable with the others |
+
+`PgTranslationStoreOptions`/`KnexTranslationStoreOptions`: `{ tableName?: string /* default '_api_kickstart_translations' */; ensureTable?: boolean /* default true */ }`. `MongodbTranslationStoreOptions`: `{ collectionName?: string /* default '_api_kickstart_translations' */ }`. Every key is a dot-path (`errors.notFound`), reassembled into a nested `TranslationDictionary` on `loadAll()` via the exported `buildDictionary()`/`setTranslationPath()` helpers, which adapter authors can reuse for a custom store.
+
+Loading happens once, at startup (or whenever you choose to call `loadAll()`/re-run `createI18nFromStore` again) — not per-request, so `i18n.t()` stays synchronous and there's no per-request database round trip.
+
+---
+
 ## File uploads
 
 `multipart/form-data` requests are parsed automatically, on every framework adapter — no extra dependency, no per-route setup:
@@ -1064,7 +1335,7 @@ app.route({
 })
 ```
 
-`rateLimit`, `idempotency`, and `cache` each accept a `store` option (`RateLimitStore` / `IdempotencyStore` / `CacheStore`) — the in-memory default (`memoryRateLimitStore`/`memoryIdempotencyStore`/`memoryCacheStore`, all exported alongside their middleware from `/middleware`) is fine for a single instance. For anything running more than one instance behind a load balancer, see [Redis-backed stores](#redis-backed-stores-and-lock).
+`rateLimit`, `idempotency`, and `cache` each accept a `store` option (`RateLimitStore` / `IdempotencyStore` / `CacheStore`) — the in-memory default (`memoryRateLimitStore`/`memoryIdempotencyStore`/`memoryCacheStore`, all exported alongside their middleware from `/middleware`) is fine for a single instance. For anything running more than one instance behind a load balancer, see [Redis-backed stores](#redis-backed-stores).
 
 `csrf()` implements the double-submit-cookie pattern. `CsrfOptions`: `{ cookieName?: string /* default 'csrf_token' */; headerName?: string /* default 'x-csrf-token' */; safeMethods?: string[] /* default ['GET','HEAD','OPTIONS'] */; cookie?: { secure?: boolean /* default true */; sameSite?: 'strict'|'lax'|'none' /* default 'lax' */; path?: string /* default '/' } }`. On a safe method it issues the cookie if the client doesn't already have one; on any other method it requires the header to match the cookie, or responds `403` (`Forbidden`). It's for cookie/session-based auth — bearer-token APIs (the default `jwt()` setup) aren't vulnerable to CSRF and don't need it.
 
@@ -1667,12 +1938,12 @@ Implement the `Logger` interface shown above to wire in Winston, Bunyan, or a re
 
 ---
 
-## Redis-backed stores and lock
+## Redis-backed stores
 
-The in-memory defaults for `rateLimit`, `idempotency`, `cache`, and `session` (and the lock used by `app.schedule()`) are fine for a single instance. For anything running more than one instance behind a load balancer, `@api-kickstart/api-kickstart/redis` provides real Redis-backed implementations of all five:
+The in-memory defaults for `rateLimit`, `idempotency`, `cache`, and `session` are fine for a single instance. For anything running more than one instance behind a load balancer, `@api-kickstart/api-kickstart/redis` provides real Redis-backed implementations of all four:
 
 ```ts
-import { redisRateLimitStore, redisIdempotencyStore, redisCacheStore, redisSessionStore, redisLock } from '@api-kickstart/api-kickstart/redis'
+import { redisRateLimitStore, redisIdempotencyStore, redisCacheStore, redisSessionStore } from '@api-kickstart/api-kickstart/redis'
 import { rateLimit, idempotency, cache } from '@api-kickstart/api-kickstart/middleware'
 import { session } from '@api-kickstart/api-kickstart/auth'
 
@@ -1693,11 +1964,16 @@ Shared `RedisStoreOptions` (every factory below accepts this bag): `{ url?: stri
 |---|---|---|---|
 | `redisCacheStore(options?)` | `CacheStore` | `(options: RedisStoreOptions = {}) => CacheStore` | keys namespaced `<prefix>cache:<key>`, `SET ... PX <ttlMs>` |
 | `redisIdempotencyStore(options?)` | `IdempotencyStore` | `(options: RedisStoreOptions = {}) => IdempotencyStore` | keys `<prefix>idempotency:<key>` |
-| `redisRateLimitStore(window, options?)` | `RateLimitStore` | `(window: string, options: RedisStoreOptions = {}) => RateLimitStore` | **note the required leading `window` argument** (e.g. `'1m'`) — the only one of the five that isn't options-only; `INCR` + `PEXPIRE` only on the first hit (fixed-window counter) |
+| `redisRateLimitStore(window, options?)` | `RateLimitStore` | `(window: string, options: RedisStoreOptions = {}) => RateLimitStore` | **note the required leading `window` argument** (e.g. `'1m'`) — the only one of the four that isn't options-only; `INCR` + `PEXPIRE` only on the first hit (fixed-window counter) |
 | `redisSessionStore(options?)` | `SessionStore` | `(options: RedisStoreOptions = {}) => SessionStore` | keys `<prefix>session:<sid>`; `set()` with an already-past `expiresAt` deletes instead of writing |
-| `redisLock(options?)` | `Lock` | `(options: RedisStoreOptions = {}) => Lock` | `acquire` = atomic `SET key token PX ttlMs NX`; `release` runs a Lua script that only deletes if the caller's token still matches — safe against releasing a lock you no longer hold |
 
-`Lock` interface (also relevant to [Scheduled tasks](#scheduled-tasks)):
+Uses `ioredis` (`^5.4.1`) for the whole `/redis` subpath — the same one used by [Redis Streams](#redis-streams).
+
+---
+
+## Distributed locks
+
+The `Lock` interface backs `app.schedule({ lock })` (see [Scheduled tasks](#scheduled-tasks)) and is useful anywhere you need "only one of these should run at a time" — a cron-like job, a webhook handler that must not process the same event twice concurrently, a leader-election check:
 
 ```ts
 interface Lock {
@@ -1706,7 +1982,35 @@ interface Lock {
 }
 ```
 
-Uses `ioredis` (`^5.4.1`) for the whole `/redis` subpath — the same one used by [Redis Streams](#redis-streams).
+`acquire` returns `true` if the caller now holds `key` (and starts a TTL clock), or `false` if someone else already holds it. Every implementation below tracks its own acquire token internally and only lets `release()` remove a lock it's still holding — a slow caller that outlives its TTL and calls `release()` late can't accidentally evict whoever re-acquired the key after it expired.
+
+Pick a backend based on what you already run — **redis**, **db** (any SQL dialect via `knex`, or `pg`/`mongodb` directly), or **constant** (in-process, no dependency):
+
+```ts
+import { redisLock } from '@api-kickstart/api-kickstart/redis'
+import { pgLock } from '@api-kickstart/api-kickstart/pg'
+import { knexLock } from '@api-kickstart/api-kickstart/knex'
+import { mongodbLock } from '@api-kickstart/api-kickstart/mongodb'
+import { memoryLock } from '@api-kickstart/api-kickstart/memory'
+
+const lock = redisLock({ url: env.REDIS_URL })          // or:
+const lock2 = pgLock(pgPool)                              // Postgres, a lease table with expires_at
+const lock3 = knexLock(knexClient)                         // any knex dialect (mysql, sqlite, mssql, ...)
+const lock4 = mongodbLock(mongoDb)                          // MongoDB, upsert-on-expiry + duplicate-key race guard
+const lock5 = memoryLock()                                  // single process only, no external dependency
+```
+
+| Factory | Backend | Signature | Storage |
+|---|---|---|---|
+| `redisLock(options?)` | Redis | `(options: RedisStoreOptions = {}) => Lock` | atomic `SET key token PX ttlMs NX`; release runs a Lua script that only deletes if the token still matches |
+| `pgLock(pool, options?)` | Postgres | `(pool: Pool, options: PgLockOptions = {}) => Lock` | lazily creates a `_api_kickstart_locks` table; acquire either steals an expired row (`UPDATE ... WHERE expires_at <= now()`) or inserts a fresh one, relying on the primary key to reject a second concurrent insert |
+| `knexLock(client, options?)` | any SQL dialect knex supports | `(client: Knex, options: KnexLockOptions = {}) => Lock` | same lease-table strategy as `pgLock`, portable across `mysql`, `sqlite`, `mssql`, and more |
+| `mongodbLock(db, options?)` | MongoDB | `(db: Db, options: MongodbLockOptions = {}) => Lock` | `findOneAndUpdate` with `upsert: true`, filtered to expired-or-absent documents; a still-held lock trips MongoDB's own duplicate-key error on the upsert insert, which is caught and reported as `false` |
+| `memoryLock()` | none (in-process) | `() => Lock` | a module-level `Map`, shared by every `memoryLock()` call in the same process — coordinates threads/callers within one instance, not across instances |
+
+`PgLockOptions`/`KnexLockOptions`: `{ tableName?: string /* default '_api_kickstart_locks' */; ensureTable?: boolean /* default true */ }`. `MongodbLockOptions`: `{ collectionName?: string /* default '_api_kickstart_locks' */ }`. All three DB-backed locks create their table/collection on first use — set `ensureTable: false` (pg/knex) if you manage migrations yourself.
+
+`redisLock`/`pgLock`/`knexLock`/`mongodbLock` all coordinate across processes and instances; `memoryLock` only coordinates within one. Use `memoryLock` for local dev/tests or a genuinely single-instance deployment, and one of the other four once you're running more than one instance of your app.
 
 ---
 
@@ -1954,7 +2258,7 @@ app.schedule(
 )
 ```
 
-Every instance's timer fires on the same cadence; whichever one wins the `SET NX PX` race for that tick runs the handler, the rest skip it silently. The lock's TTL defaults to the task's `interval` (override with `lockTtlMs`) and is released right after the handler finishes — including when it throws — so a slow or crashed instance can't hold the cluster hostage past one interval. Without `lock`, it's `setInterval`, once per instance, same as before. `lock` accepts any `Lock` implementation, not just `redisLock` — see [Redis-backed stores](#redis-backed-stores-and-lock).
+Every instance's timer fires on the same cadence; whichever one wins the `SET NX PX` race for that tick runs the handler, the rest skip it silently. The lock's TTL defaults to the task's `interval` (override with `lockTtlMs`) and is released right after the handler finishes — including when it throws — so a slow or crashed instance can't hold the cluster hostage past one interval. Without `lock`, it's `setInterval`, once per instance, same as before. `lock` accepts any `Lock` implementation — `redisLock`, `pgLock`, `knexLock`, `mongodbLock`, or `memoryLock` — see [Distributed locks](#distributed-locks).
 
 ---
 
@@ -2052,7 +2356,7 @@ Not yet automated — verify these yourself:
 - [ ] Broker consumers are idempotent when an outbox is enabled (see [Transactional outbox](#transactional-outbox))
 - [ ] Passwords are stored via `hashPassword()`, never plain text (`doctor` has no way to inspect your database)
 - [ ] `csrf()` is in the middleware chain for any route reachable via cookie/session auth (bearer-token routes don't need it)
-- [ ] A non-default `RefreshStore`/`SessionStore`/rate-limit-etc. store is configured if you run more than one instance (the built-in defaults are in-memory per process — see [Redis-backed stores](#redis-backed-stores-and-lock))
+- [ ] A non-default `RefreshStore`/`SessionStore`/rate-limit-etc. store is configured if you run more than one instance (the built-in defaults are in-memory per process — see [Redis-backed stores](#redis-backed-stores))
 - [ ] `app.resource()`'s generated `list` action has no built-in pagination — add it yourself for any table that can grow large (see [CRUD shorthand](#crud-shorthand))
 
 ---
@@ -2125,8 +2429,11 @@ Tests run with `vitest` (`npm test`), linting with `eslint` (`npm run lint`), an
 - [x] `signWebhook()` / `verifyWebhook()` — HMAC-SHA256 with timestamp tolerance, constant-time comparison
 - [x] `auditLog()` — structured "who did what" middleware, pluggable sink
 - [x] `openapi({ serve })` renders a real interactive docs page (Scalar), not just the raw JSON spec again
-- [x] `app.schedule({ lock })` — `redisLock` runs a scheduled task once per cluster instead of once per instance
+- [x] `app.schedule({ lock })` — `redisLock`/`pgLock`/`knexLock`/`mongodbLock`/`memoryLock` run a scheduled task once per cluster (or once per process for `memoryLock`) instead of once per instance
 - [x] Consolidated from 30 separately published packages into one (`@api-kickstart/api-kickstart`) with adapters as bundled subpath exports — one `npm install`, no picking adapters up front
+- [x] `/patterns` — 112 built-in named regex patterns across identifiers, network, security, dates, phone/postal, finance, and dev-ecosystem categories, extensible with your own custom named patterns via `register()`
+- [x] `/dates` — token-based `formatDate()`, 18 named presets via `formatDateAs()`, and `formatDateForDb()` for MySQL/Postgres/SQLite/MongoDB/MSSQL/Oracle-shaped date strings
+- [x] `/i18n` — `createI18n()` middleware detects locale from a query param, cookie, or `Accept-Language` header (with quality-value parsing and base-language fallback), plus a dictionary-based `t()` translator with `{param}` interpolation and per-key default-locale fallback; `createTranslator()` for the same translation logic without request detection; `TranslationStore` (`pgTranslationStore`/`knexTranslationStore`/`mongodbTranslationStore`/`redisTranslationStore`/`memoryTranslationStore`) loads dictionaries from a db, Redis, or an explicit constant instead of hardcoding them
 - [ ] `scopeAudit` can't verify a handler that reads `ctx.scope` but doesn't actually apply it to the query it runs — only "never touched it at all" is detectable without per-adapter query interception
 - [ ] `app.resource()`'s generated `list` action has no pagination, sorting, or filtering beyond the scope filter
 - [ ] `apiKey()` has no built-in rate limiting — compose it with the `rateLimit` middleware/route option yourself
