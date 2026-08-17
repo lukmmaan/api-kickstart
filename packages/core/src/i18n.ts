@@ -35,6 +35,26 @@ function interpolate(template: string, params?: TranslationParams): string {
   })
 }
 
+/** Mutates `dictionary`, writing `value` at the dot-path `key` (creating nested objects as needed). */
+export function setTranslationPath(dictionary: TranslationDictionary, key: string, value: string): void {
+  const segments = key.split('.')
+  let node = dictionary
+  for (let i = 0; i < segments.length - 1; i++) {
+    const segment = segments[i]
+    const next = node[segment]
+    if (typeof next !== 'object' || next === null) node[segment] = {}
+    node = node[segment] as TranslationDictionary
+  }
+  node[segments[segments.length - 1]] = value
+}
+
+/** Reassembles flat `key.path` → value rows (e.g. from a database table or Redis hash) into a nested TranslationDictionary. */
+export function buildDictionary(entries: Iterable<readonly [key: string, value: string]>): TranslationDictionary {
+  const dictionary: TranslationDictionary = {}
+  for (const [key, value] of entries) setTranslationPath(dictionary, key, value)
+  return dictionary
+}
+
 export interface TranslatorOptions {
   locales: string[]
   defaultLocale: string
@@ -77,6 +97,25 @@ export function createTranslator(options: TranslatorOptions): Translator {
       if (!locales.includes(locale)) locales.push(locale)
     },
   }
+}
+
+/**
+ * Where a translator's dictionaries come from: a database table, a Redis hash, or
+ * an in-memory constant — see /pg, /knex, /mongodb, /redis, and /memory for the
+ * concrete implementations (pgTranslationStore, knexTranslationStore, mongodbTranslationStore,
+ * redisTranslationStore, memoryTranslationStore).
+ */
+export interface TranslationStore {
+  loadAll(): Promise<Record<string, TranslationDictionary>>
+  set(locale: string, key: string, value: string): Promise<void>
+}
+
+export async function createTranslatorFromStore(
+  store: TranslationStore,
+  options: Omit<TranslatorOptions, 'dictionaries'>,
+): Promise<Translator> {
+  const dictionaries = await store.loadAll()
+  return createTranslator({ ...options, dictionaries })
 }
 
 interface WeightedTag {
@@ -194,4 +233,12 @@ export function createI18n(options: I18nOptions): I18n {
     defaultLocale: translator.defaultLocale,
     addDictionary: translator.addDictionary,
   }
+}
+
+export async function createI18nFromStore(
+  store: TranslationStore,
+  options: Omit<I18nOptions, 'dictionaries'>,
+): Promise<I18n> {
+  const dictionaries = await store.loadAll()
+  return createI18n({ ...options, dictionaries })
 }

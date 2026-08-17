@@ -4,6 +4,7 @@ import { normalizeMongoError } from './errors.js'
 
 export { mongodbOutboxStore, type MongodbOutboxStoreOptions } from './outbox.js'
 export { mongodbLock, type MongodbLockOptions } from './lock.js'
+export { mongodbTranslationStore, type MongodbTranslationStoreOptions } from './i18n.js'
 
 export interface MongodbOptions {
   dbName?: string

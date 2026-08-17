@@ -1,7 +1,31 @@
 import { describe, expect, it } from 'vitest'
 import { createApp } from './index.js'
-import { createI18n, createTranslator, currentLocale } from './i18n.js'
+import {
+  buildDictionary,
+  createI18n,
+  createI18nFromStore,
+  createTranslator,
+  createTranslatorFromStore,
+  currentLocale,
+  setTranslationPath,
+  type TranslationDictionary,
+  type TranslationStore,
+} from './i18n.js'
 import { fakeFramework } from './test-helpers.js'
+
+function fakeStore(initial: Record<string, TranslationDictionary> = {}): TranslationStore {
+  const data = new Map<string, TranslationDictionary>(Object.entries(initial))
+  return {
+    async loadAll() {
+      return Object.fromEntries(data)
+    },
+    async set(locale, key, value) {
+      const dictionary = data.get(locale) ?? {}
+      setTranslationPath(dictionary, key, value)
+      data.set(locale, dictionary)
+    },
+  }
+}
 
 const dictionaries = {
   en: {
@@ -135,5 +159,49 @@ describe('createI18n middleware', () => {
 
     const res = await app.inject({ method: 'GET', path: '/whoami', query: { lang: 'id' } })
     expect(res.body).toEqual({ locale: 'id' })
+  })
+})
+
+describe('buildDictionary / setTranslationPath', () => {
+  it('reassembles flat dot-path entries into a nested dictionary', () => {
+    expect(buildDictionary([['greeting', 'Hello'], ['errors.notFound', 'Not found']])).toEqual({
+      greeting: 'Hello',
+      errors: { notFound: 'Not found' },
+    })
+  })
+
+  it('setTranslationPath mutates an existing dictionary in place without disturbing siblings', () => {
+    const dictionary: TranslationDictionary = { greeting: 'Hi', errors: { notFound: 'Not found' } }
+    setTranslationPath(dictionary, 'errors.forbidden', 'Forbidden')
+    expect(dictionary).toEqual({ greeting: 'Hi', errors: { notFound: 'Not found', forbidden: 'Forbidden' } })
+  })
+})
+
+describe('createTranslatorFromStore / createI18nFromStore', () => {
+  it('createTranslatorFromStore loads dictionaries from the store before returning a working translator', async () => {
+    const store = fakeStore()
+    await store.set('en', 'greeting', 'Hello, {name}!')
+    await store.set('id', 'greeting', 'Halo, {name}!')
+
+    const translator = await createTranslatorFromStore(store, { locales: ['en', 'id'], defaultLocale: 'en' })
+    expect(translator.t('greeting', { name: 'Alice' }, 'id')).toBe('Halo, Alice!')
+  })
+
+  it('createI18nFromStore loads dictionaries from the store and wires a working middleware', async () => {
+    const store = fakeStore()
+    await store.set('en', 'greeting', 'Hello, {name}!')
+    await store.set('id', 'greeting', 'Halo, {name}!')
+
+    const i18n = await createI18nFromStore(store, { locales: ['en', 'id'], defaultLocale: 'en' })
+    const app = createApp({ framework: fakeFramework(), middleware: [i18n.middleware] })
+    app.route({
+      method: 'GET',
+      path: '/greet',
+      auth: false,
+      handler: async () => ({ message: i18n.t('greeting', { name: 'Alice' }) }),
+    })
+
+    const res = await app.inject({ method: 'GET', path: '/greet', query: { lang: 'id' } })
+    expect(res.body).toEqual({ message: 'Halo, Alice!' })
   })
 })

@@ -1033,6 +1033,42 @@ translator.t('greeting', { name: 'Alice' }, 'id')   // locale must be passed exp
 
 `createI18n()` is built on top of `createTranslator()` internally, so both share the exact same lookup/interpolation/fallback behavior.
 
+### Where dictionaries come from
+
+Passing a `dictionaries` object (as in every example above) hardcodes your translations into the deploy — fine for a handful of locales, less fine once translators or an admin need to update copy without a release. `TranslationStore` is the pluggable alternative: a **db** table (any SQL dialect via `knex`, or `pg` directly, or `mongodb`), **redis**, or an explicit in-memory **constant** — all behind the same interface:
+
+```ts
+interface TranslationStore {
+  loadAll(): Promise<Record<string, TranslationDictionary>>
+  set(locale: string, key: string, value: string): Promise<void>
+}
+```
+
+`createTranslatorFromStore(store, options)` / `createI18nFromStore(store, options)` are async versions of `createTranslator`/`createI18n` — same `options` minus `dictionaries`, which gets loaded from the store instead:
+
+```ts
+import { createI18nFromStore } from '@api-kickstart/api-kickstart/i18n'
+import { pgTranslationStore } from '@api-kickstart/api-kickstart/pg'
+
+const store = pgTranslationStore(pgPool)
+await store.set('en', 'greeting', 'Hello, {name}!')   // e.g. from an admin panel
+await store.set('id', 'greeting', 'Halo, {name}!')
+
+const i18n = await createI18nFromStore(store, { locales: ['en', 'id'], defaultLocale: 'en' })
+```
+
+| Factory | Backend | Signature | Storage |
+|---|---|---|---|
+| `pgTranslationStore(pool, options?)` | Postgres | `(pool: Pool, options: PgTranslationStoreOptions = {}) => TranslationStore` | lazily creates a `_api_kickstart_translations(locale, key, value)` table, `PRIMARY KEY (locale, key)` |
+| `knexTranslationStore(client, options?)` | any SQL dialect knex supports | `(client: Knex, options: KnexTranslationStoreOptions = {}) => TranslationStore` | same shape, portable across `mysql`, `sqlite`, `mssql`, and more |
+| `mongodbTranslationStore(db, options?)` | MongoDB | `(db: Db, options: MongodbTranslationStoreOptions = {}) => TranslationStore` | one document per `{ locale, key, value }`, upserted by `set()` |
+| `redisTranslationStore(options)` | Redis | `(options: RedisTranslationStoreOptions) => TranslationStore` | one hash per locale (`<prefix>i18n:<locale>`), dot-path key as the hash field; **requires `locales: string[]`** in `options` — Redis has no cheap "list every locale" scan |
+| `memoryTranslationStore(initial?)` | none (in-process) | `(initial: Record<string, TranslationDictionary> = {}) => TranslationStore` | the explicit "constant" backend — same effect as passing `dictionaries` directly, but through the `TranslationStore` interface so it's swappable with the others |
+
+`PgTranslationStoreOptions`/`KnexTranslationStoreOptions`: `{ tableName?: string /* default '_api_kickstart_translations' */; ensureTable?: boolean /* default true */ }`. `MongodbTranslationStoreOptions`: `{ collectionName?: string /* default '_api_kickstart_translations' */ }`. Every key is a dot-path (`errors.notFound`), reassembled into a nested `TranslationDictionary` on `loadAll()` via the exported `buildDictionary()`/`setTranslationPath()` helpers, which adapter authors can reuse for a custom store.
+
+Loading happens once, at startup (or whenever you choose to call `loadAll()`/re-run `createI18nFromStore` again) — not per-request, so `i18n.t()` stays synchronous and there's no per-request database round trip.
+
 ---
 
 ## File uploads
@@ -2397,7 +2433,7 @@ Tests run with `vitest` (`npm test`), linting with `eslint` (`npm run lint`), an
 - [x] Consolidated from 30 separately published packages into one (`@api-kickstart/api-kickstart`) with adapters as bundled subpath exports — one `npm install`, no picking adapters up front
 - [x] `/patterns` — 112 built-in named regex patterns across identifiers, network, security, dates, phone/postal, finance, and dev-ecosystem categories, extensible with your own custom named patterns via `register()`
 - [x] `/dates` — token-based `formatDate()`, 18 named presets via `formatDateAs()`, and `formatDateForDb()` for MySQL/Postgres/SQLite/MongoDB/MSSQL/Oracle-shaped date strings
-- [x] `/i18n` — `createI18n()` middleware detects locale from a query param, cookie, or `Accept-Language` header (with quality-value parsing and base-language fallback), plus a dictionary-based `t()` translator with `{param}` interpolation and per-key default-locale fallback; `createTranslator()` for the same translation logic without request detection
+- [x] `/i18n` — `createI18n()` middleware detects locale from a query param, cookie, or `Accept-Language` header (with quality-value parsing and base-language fallback), plus a dictionary-based `t()` translator with `{param}` interpolation and per-key default-locale fallback; `createTranslator()` for the same translation logic without request detection; `TranslationStore` (`pgTranslationStore`/`knexTranslationStore`/`mongodbTranslationStore`/`redisTranslationStore`/`memoryTranslationStore`) loads dictionaries from a db, Redis, or an explicit constant instead of hardcoding them
 - [ ] `scopeAudit` can't verify a handler that reads `ctx.scope` but doesn't actually apply it to the query it runs — only "never touched it at all" is detectable without per-adapter query interception
 - [ ] `app.resource()`'s generated `list` action has no pagination, sorting, or filtering beyond the scope filter
 - [ ] `apiKey()` has no built-in rate limiting — compose it with the `rateLimit` middleware/route option yourself

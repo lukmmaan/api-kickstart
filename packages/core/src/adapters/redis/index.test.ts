@@ -1,6 +1,13 @@
 import { Redis } from 'ioredis'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
-import { redisCacheStore, redisIdempotencyStore, redisLock, redisRateLimitStore, redisSessionStore } from './index.js'
+import {
+  redisCacheStore,
+  redisIdempotencyStore,
+  redisLock,
+  redisRateLimitStore,
+  redisSessionStore,
+  redisTranslationStore,
+} from './index.js'
 
 const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379')
 const keyPrefix = 'kickstart-test:'
@@ -129,5 +136,32 @@ describe('redisLock', () => {
     const lock = redisLock({ redis, keyPrefix })
     await expect(lock.acquire('a', 5000)).resolves.toBe(true)
     await expect(lock.acquire('b', 5000)).resolves.toBe(true)
+  })
+})
+
+describe('redisTranslationStore', () => {
+  it('returns an empty dictionary for a locale with no hash yet', async () => {
+    const store = redisTranslationStore({ redis, keyPrefix, locales: ['en', 'id'] })
+    await expect(store.loadAll()).resolves.toEqual({})
+  })
+
+  it('set() writes a field into the locale hash, and loadAll() reassembles dot-path keys into a nested dictionary', async () => {
+    const store = redisTranslationStore({ redis, keyPrefix, locales: ['en', 'id'] })
+    await store.set('en', 'greeting', 'Hello')
+    await store.set('en', 'errors.notFound', 'Not found')
+    await store.set('id', 'greeting', 'Halo')
+
+    await expect(store.loadAll()).resolves.toEqual({
+      en: { greeting: 'Hello', errors: { notFound: 'Not found' } },
+      id: { greeting: 'Halo' },
+    })
+  })
+
+  it('only loads the locales it was configured with', async () => {
+    const store = redisTranslationStore({ redis, keyPrefix, locales: ['en'] })
+    await store.set('en', 'greeting', 'Hello')
+    await redis.hset(`${keyPrefix}i18n:fr`, 'greeting', 'Bonjour')
+
+    await expect(store.loadAll()).resolves.toEqual({ en: { greeting: 'Hello' } })
   })
 })

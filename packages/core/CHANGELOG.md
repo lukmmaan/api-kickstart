@@ -1,5 +1,18 @@
 # @api-kickstart/core
 
+## 1.7.0
+
+### Minor Changes
+
+- Add `TranslationStore`, a pluggable source for `/i18n` dictionaries — a database table, Redis, or an explicit in-memory constant — instead of always hardcoding `dictionaries` at creation time:
+  
+  - `pgTranslationStore(pool, options?)` from `/pg` and `knexTranslationStore(client, options?)` from `/knex` — a `_api_kickstart_translations(locale, key, value)` table.
+  - `mongodbTranslationStore(db, options?)` from `/mongodb` — one document per `{ locale, key, value }`.
+  - `redisTranslationStore(options)` from `/redis` — one hash per locale.
+  - `memoryTranslationStore(initial?)` from `/memory` — the explicit in-memory "constant" backend, same effect as passing `dictionaries` directly but through the same interface as the others.
+  
+  `createTranslatorFromStore(store, options)` and `createI18nFromStore(store, options)` are async counterparts to `createTranslator`/`createI18n` that load `dictionaries` from a `TranslationStore` once at startup — `t()` itself stays synchronous, with no per-request database round trip. Also exports `buildDictionary()`/`setTranslationPath()`, the dot-path-key helpers every store uses to reassemble flat `key.path` → value rows into a nested `TranslationDictionary`.
+
 ## 1.6.0
 
 ### Minor Changes
