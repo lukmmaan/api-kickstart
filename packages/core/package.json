@@ -1,6 +1,6 @@
 {
   "name": "@api-kickstart/api-kickstart",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Auth, authorization, validation, CORS, error handling, database, and message broker, wired together with sane defaults, swappable everywhere.",
   "keywords": [
     "api",
@@ -41,6 +41,12 @@
   },
   "author": "Lukman Yudokusumo",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -203,7 +209,8 @@
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

@@ -1,5 +1,11 @@
 # @api-kickstart/core
 
+## 1.1.2
+
+### Patch Changes
+
+- Add `engines.node` (`>=20`, matching the CI matrix) and `publishConfig.access: "public"` so publishing a scoped package doesn't require passing `--access public` by hand. Include `CHANGELOG.md` in the published tarball (it existed on disk but wasn't in `files`, so it never actually shipped).
+
 ## 1.1.1
 
 ### Patch Changes

@@ -2137,4 +2137,4 @@ Every adapter and built-in listed above as done is a real implementation, not a 
 
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE). Found a security vulnerability? See [SECURITY.md](./SECURITY.md) instead of opening a public issue.
