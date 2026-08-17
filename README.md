@@ -57,6 +57,7 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
   - [Writing your own validator](#writing-your-own-validator)
 - [Regex patterns](#regex-patterns)
 - [Date formatting](#date-formatting)
+- [Internationalization (i18n)](#internationalization-i18n)
 - [File uploads](#file-uploads)
 - [Routing](#routing)
   - [Single route](#single-route)
@@ -932,6 +933,95 @@ DATE_FORMATS.fileNameSafe      // 'YYYY-MM-DD_HH-mm-ss'
 | `'mongodb'` | native `Date.prototype.toISOString()` | `2024-01-05T09:07:03.045Z` |
 
 This is a formatter, not a parameterized-query builder — most adapters in this package (`pg`, `knex`, `mongoose`, ...) accept a native `Date` object directly and don't need string formatting at all; reach for `formatDateForDb` specifically when you're building a raw SQL string or need a DB-shaped string for something other than a bound query parameter (a filename, a log line, a CSV export, a legacy column expecting text).
+
+---
+
+## Internationalization (i18n)
+
+Dictionary-based translation, plus a middleware that figures out which locale a client wants — from a query param, a cookie, or the standard `Accept-Language` header — with a configured default when none of them say anything usable.
+
+```ts
+import { createI18n } from '@api-kickstart/api-kickstart/i18n'
+
+const i18n = createI18n({
+  locales: ['en', 'id', 'ja'],
+  defaultLocale: 'en',
+  dictionaries: {
+    en: { greeting: 'Hello, {name}!', errors: { notFound: 'Not found' } },
+    id: { greeting: 'Halo, {name}!', errors: { notFound: 'Tidak ditemukan' } },
+    ja: { greeting: 'こんにちは、{name}さん!' },   // falls back to English for keys it doesn't have
+  },
+})
+
+createApp({
+  framework: express(),
+  middleware: [i18n.middleware],
+})
+
+app.route({
+  method: 'GET',
+  path: '/greet',
+  auth: false,
+  handler: async (ctx) => ({ message: i18n.t('greeting', { name: ctx.user?.id ?? 'Guest' }) }),
+})
+```
+
+### Locale detection
+
+`I18nOptions` reference:
+
+| Field | Type | Notes |
+|---|---|---|
+| `locales` | `string[]` | **required** — every locale the app actually supports; anything else falls back to `defaultLocale` |
+| `defaultLocale` | `string` | **required** — used when detection finds nothing, or finds a locale not in `locales` |
+| `dictionaries` | `Record<string, TranslationDictionary>` | **required** — one nested key→string tree per locale, see below |
+| `detect` | `('query' \| 'cookie' \| 'header')[]` | optional, default `['query', 'cookie', 'header']` — first source that resolves to a supported locale wins |
+| `queryParam` | `string` | optional, default `'lang'` — e.g. `?lang=id` |
+| `cookieName` | `string` | optional, default `'locale'` |
+| `headerName` | `string` | optional, default `'accept-language'` — parsed per the real HTTP spec, including `q=` quality values (`Accept-Language: fr-FR,id;q=0.9,en;q=0.8` picks `id` over `en` if `fr` isn't supported) and region-qualified tags falling back to their base language (`id-ID` matches a configured `id`) |
+
+The middleware also stamps the resolved locale onto the `content-language` response header, and makes it available anywhere in that request's call stack — including deep inside services or model hooks, the same way `currentUser()` works — via `currentLocale()`:
+
+```ts
+import { currentLocale } from '@api-kickstart/api-kickstart/i18n'
+
+// deep inside a service, no ctx threaded through
+const locale = currentLocale()   // 'id', or null outside a request
+```
+
+`i18n.locale()` is the same thing scoped to one `I18n` instance, falling back to `defaultLocale` instead of `null` when called outside a request.
+
+### Translation
+
+```ts
+interface TranslationDictionary {
+  [key: string]: string | TranslationDictionary
+}
+```
+
+Dictionaries nest — `i18n.t('errors.notFound')` looks up `dictionaries[locale].errors.notFound`. Values support `{param}` interpolation:
+
+```ts
+i18n.t('greeting', { name: 'Alice' })            // uses the current request's detected locale
+i18n.t('greeting', { name: 'Alice' }, 'id')       // explicit locale, ignores the request
+```
+
+Resolution order for `t(key, params?, locale?)`: the explicit `locale` argument, else `currentLocale()` (the request's detected locale), else `defaultLocale`. If the key is missing in that locale's dictionary, it falls back to `defaultLocale`'s dictionary — so you don't have to translate every string into every locale on day one (see `ja` only having `greeting` in the example above). If the key is missing everywhere, `t()` returns the key itself rather than throwing or returning something empty — the same "fail visibly, not silently" instinct as the rest of this package, since a raw key showing up in a response is an obvious, greppable bug.
+
+`i18n.addDictionary(locale, dictionary)` registers a locale after the fact (e.g. loading translations from a database or a CMS at startup instead of hardcoding them).
+
+### Standalone translator
+
+If you don't need request-based locale detection at all — a broker consumer, a CLI script, a scheduled task — `createTranslator()` gives you just the dictionary/interpolation/fallback logic without the middleware or `Context` dependency:
+
+```ts
+import { createTranslator } from '@api-kickstart/api-kickstart/i18n'
+
+const translator = createTranslator({ locales: ['en', 'id'], defaultLocale: 'en', dictionaries })
+translator.t('greeting', { name: 'Alice' }, 'id')   // locale must be passed explicitly — no request to detect it from
+```
+
+`createI18n()` is built on top of `createTranslator()` internally, so both share the exact same lookup/interpolation/fallback behavior.
 
 ---
 
@@ -2264,6 +2354,7 @@ Tests run with `vitest` (`npm test`), linting with `eslint` (`npm run lint`), an
 - [x] Consolidated from 30 separately published packages into one (`@api-kickstart/api-kickstart`) with adapters as bundled subpath exports — one `npm install`, no picking adapters up front
 - [x] `/patterns` — 112 built-in named regex patterns across identifiers, network, security, dates, phone/postal, finance, and dev-ecosystem categories, extensible with your own custom named patterns via `register()`
 - [x] `/dates` — token-based `formatDate()`, 18 named presets via `formatDateAs()`, and `formatDateForDb()` for MySQL/Postgres/SQLite/MongoDB/MSSQL/Oracle-shaped date strings
+- [x] `/i18n` — `createI18n()` middleware detects locale from a query param, cookie, or `Accept-Language` header (with quality-value parsing and base-language fallback), plus a dictionary-based `t()` translator with `{param}` interpolation and per-key default-locale fallback; `createTranslator()` for the same translation logic without request detection
 - [ ] `scopeAudit` can't verify a handler that reads `ctx.scope` but doesn't actually apply it to the query it runs — only "never touched it at all" is detectable without per-adapter query interception
 - [ ] `app.resource()`'s generated `list` action has no pagination, sorting, or filtering beyond the scope filter
 - [ ] `apiKey()` has no built-in rate limiting — compose it with the `rateLimit` middleware/route option yourself

@@ -1,5 +1,11 @@
 # @api-kickstart/core
 
+## 1.4.0
+
+### Minor Changes
+
+- Add `@api-kickstart/api-kickstart/i18n` — `createI18n({ locales, defaultLocale, dictionaries, detect?, queryParam?, cookieName?, headerName? })` returns a middleware that detects the client's locale from a query param, cookie, or the `Accept-Language` header (with proper `q=` quality-value parsing and region-to-base-language fallback, e.g. `id-ID` matches a configured `id`), falling back to `defaultLocale` when nothing matches. Detected locale is available anywhere in the request via `currentLocale()` (AsyncLocalStorage-backed, same pattern as `currentUser()`). Includes a dictionary-based `t(key, params?, locale?)` translator with dot-path keys, `{param}` interpolation, and automatic fallback to the default locale's dictionary for missing keys. `createTranslator()` exposes the same translation logic standalone, for broker consumers/CLI scripts/scheduled tasks with no HTTP request to detect a locale from.
+
 ## 1.3.0
 
 ### Minor Changes
