@@ -1,5 +1,7 @@
 # Contributing
 
+By participating in this project you agree to abide by the [Code of Conduct](./CODE_OF_CONDUCT.md). Found a security vulnerability? Please follow [SECURITY.md](./SECURITY.md) instead of opening a public issue.
+
 ## Repository structure
 
 Everything ships as a single npm package, `@api-kickstart/api-kickstart`. The workspace is:
