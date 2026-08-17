@@ -128,52 +128,9 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
 npm install @api-kickstart/api-kickstart
 ```
 
-One package. Every framework, database, broker, validator, storage, and logging adapter lives inside it as a subpath import — `@api-kickstart/api-kickstart/express`, `@api-kickstart/api-kickstart/pg`, `@api-kickstart/api-kickstart/zod`, and so on. Then install the *underlying library* for whichever ones you actually use:
+That's it — one command. Every framework, database, broker, validator, storage, and logging adapter (Express, Fastify, Hono, Koa, NestJS, `pg`, Prisma-compatible, Drizzle, Mongoose, Knex, TypeORM, Sequelize, MongoDB, RabbitMQ, Kafka, Redis, BullMQ, SQS, NATS, MQTT, Pub/Sub, Zod, Joi, Yup, Valibot, TypeBox, S3, Pino, and more) ships bundled as a regular dependency, so it's already in `node_modules` — no separate `npm install express` / `npm install pg` / `npm install zod` afterwards, no picking which ones to install up front. Each adapter is still only *loaded* when you actually `import` its subpath (`@api-kickstart/api-kickstart/express`, `@api-kickstart/api-kickstart/pg`, `@api-kickstart/api-kickstart/zod`, and so on), so unused adapters don't cost you anything at runtime — the tradeoff is a larger `node_modules` on disk in exchange for zero extra install steps.
 
-```bash
-# framework — pick one
-npm install express                                              # or:
-npm install fastify
-npm install hono
-npm install koa
-npm install @nestjs/core @nestjs/common @nestjs/platform-express reflect-metadata rxjs
-# node:http needs nothing extra
-
-# database — pick one
-npm install pg                                                   # or:
-npm install @prisma/client        # generate your client separately with `prisma generate`
-npm install drizzle-orm
-npm install mongoose
-npm install knex                  # plus whichever driver knex talks to (pg, mysql2, better-sqlite3, ...)
-npm install typeorm reflect-metadata
-npm install sequelize
-npm install mongodb
-
-# broker — optional, pick one if you need it
-npm install amqplib                                               # or:
-npm install kafkajs
-npm install ioredis          # for redis-stream, and the redis-backed stores below
-npm install bullmq
-npm install @aws-sdk/client-sqs
-npm install nats
-npm install mqtt
-npm install @google-cloud/pubsub
-
-# validation — pick one
-npm install zod                                                   # or:
-npm install joi joi-to-json
-npm install yup @sodaru/yup-to-json-schema
-npm install valibot @valibot/to-json-schema
-npm install @sinclair/typebox
-
-# storage — optional
-npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner
-
-# structured logging — optional
-npm install pino
-```
-
-Every one of those is an **optional peer dependency** (`peerDependencies` + `peerDependenciesMeta: { optional: true }`) — npm won't force-install libraries for adapters you don't use, and importing a subpath you haven't installed the library for fails loudly at that `import`, not silently at runtime. A handful of small support libraries (`@hono/node-server`, `koa-bodyparser`, `zod-to-json-schema`, `jose`) are regular `dependencies` and always come along, since they're internal implementation details of adapters that need them, not something you'd choose an alternative for.
+The one exception is Prisma: `db: prisma(client)` takes any object shaped like a `PrismaClient`, and `@prisma/client` itself has to be generated against *your* schema (`prisma generate`), so it can't be bundled — install and generate it yourself if you use that adapter.
 
 ---
 
@@ -743,7 +700,7 @@ import { z } from 'zod'
 createApp({ validator: zod() })
 ```
 
-**Types flow through** — `ctx.body`/`ctx.query`/`ctx.params` are fully typed from the Zod schema, no manual interface, no casting. `toJsonSchema` delegates to `zod-to-json-schema` (bundled as a regular dependency, so no separate install) with `target: 'openApi3'`. Peer dependency: `zod` (`^3.23.0`).
+**Types flow through** — `ctx.body`/`ctx.query`/`ctx.params` are fully typed from the Zod schema, no manual interface, no casting. `toJsonSchema` delegates to `zod-to-json-schema` (bundled as a regular dependency, so no separate install) with `target: 'openApi3'`. Uses: `zod` (`^3.23.0`).
 
 ### Joi
 
@@ -762,7 +719,7 @@ app.route({
 })
 ```
 
-Validates with `schema.validate(value, { abortEarly: false })` so every field's errors are collected, not just the first. `toJsonSchema` delegates to the `joi-to-json` package. Peer dependencies: `joi` (`^17.13.3`), `joi-to-json` (`^5.0.5`) — the second is only needed if you call `toJsonSchema` (i.e. use OpenAPI schema generation).
+Validates with `schema.validate(value, { abortEarly: false })` so every field's errors are collected, not just the first. `toJsonSchema` delegates to the `joi-to-json` package. Uses: `joi` (`^17.13.3`), `joi-to-json` (`^5.0.5`) — the second is only needed if you call `toJsonSchema` (i.e. use OpenAPI schema generation).
 
 ### Yup
 
@@ -781,7 +738,7 @@ app.route({
 })
 ```
 
-Validates with `schema.validateSync(value, { abortEarly: false })`. `toJsonSchema` delegates to `@sodaru/yup-to-json-schema`'s `convertSchema`. Peer dependencies: `yup` (`^1.4.0`), `@sodaru/yup-to-json-schema` (`^2.0.1`).
+Validates with `schema.validateSync(value, { abortEarly: false })`. `toJsonSchema` delegates to `@sodaru/yup-to-json-schema`'s `convertSchema`. Uses: `yup` (`^1.4.0`), `@sodaru/yup-to-json-schema` (`^2.0.1`).
 
 ### Valibot
 
@@ -800,7 +757,7 @@ app.route({
 })
 ```
 
-Validates with `v.safeParse(schema, value)`. `toJsonSchema` delegates to `@valibot/to-json-schema`. Types flow through, same as Zod. Peer dependencies: `valibot` (`^1.4.0`), `@valibot/to-json-schema` (`^1.4.0`).
+Validates with `v.safeParse(schema, value)`. `toJsonSchema` delegates to `@valibot/to-json-schema`. Types flow through, same as Zod. Uses: `valibot` (`^1.4.0`), `@valibot/to-json-schema` (`^1.4.0`).
 
 ### TypeBox
 
@@ -819,7 +776,7 @@ app.route({
 })
 ```
 
-Validates with `@sinclair/typebox/value`'s `Value.Check`/`Value.Errors`. `toJsonSchema` is a trivial passthrough — TypeBox schemas already *are* JSON Schema. Peer dependency: `@sinclair/typebox` (`^0.33.0`).
+Validates with `@sinclair/typebox/value`'s `Value.Check`/`Value.Errors`. `toJsonSchema` is a trivial passthrough — TypeBox schemas already *are* JSON Schema. Uses: `@sinclair/typebox` (`^0.33.0`).
 
 ### Writing your own validator
 
@@ -1265,7 +1222,7 @@ interface DbAdapter {
 }
 ```
 
-| Adapter | Subpath | Databases | Peer dependency |
+| Adapter | Subpath | Databases | Underlying library |
 |---|---|---|---|
 | [pg](#pg) | `/pg` | raw `node-postgres` | `pg` |
 | [Prisma](#prisma) | `/prisma` | Postgres, MySQL, SQLite, SQL Server, CockroachDB, MongoDB | none (duck-typed) |
@@ -1299,7 +1256,7 @@ import { prisma } from '@api-kickstart/api-kickstart/prisma'
 db: prisma(new PrismaClient())
 ```
 
-`prisma(client: PrismaLikeClient): DbAdapter` — the client type is **structurally duck-typed** (`$transaction`, `$disconnect`, optional `$queryRaw`, plus an open index signature for model accessors), so there's no `prisma`/`@prisma/client` peer dependency to declare at all — any object shaped like a `PrismaClient` works. `transaction` delegates to `client.$transaction(fn)`. `healthcheck` runs `` client.$queryRaw`SELECT 1` `` if present, else always returns `true`. `close` calls `client.$disconnect()`.
+`prisma(client: PrismaLikeClient): DbAdapter` — the client type is **structurally duck-typed** (`$transaction`, `$disconnect`, optional `$queryRaw`, plus an open index signature for model accessors), so `@prisma/client` isn't bundled at all — see [Install](#install) — any object shaped like a `PrismaClient` works. `transaction` delegates to `client.$transaction(fn)`. `healthcheck` runs `` client.$queryRaw`SELECT 1` `` if present, else always returns `true`. `close` calls `client.$disconnect()`.
 
 Error normalization: Prisma code `P2002` → `Conflict('Unique constraint violation')`.
 
@@ -1314,7 +1271,7 @@ db: drizzle(drizzleDb)
 
 `drizzle(client: DrizzleLikeDb): DbAdapter` — `client` just needs a `transaction<T>(fn)` method. Also exports `scopeToWhere(table, filter): SQL | undefined`, which converts a `ScopeFilter` into a drizzle `and(eq(...), ...)` where-clause — since `translateScope` on this adapter is a passthrough, use `scopeToWhere` directly in your own queries: `db.select().from(orders).where(scopeToWhere(orders, ctx.scope))`.
 
-Error normalization is Postgres-code-shaped (`23505`/`23503`/`23502`, same mapping as `pg`), so it's best suited to Drizzle's Postgres driver. Peer dependency: `drizzle-orm` (`^0.33.0`).
+Error normalization is Postgres-code-shaped (`23505`/`23503`/`23502`, same mapping as `pg`), so it's best suited to Drizzle's Postgres driver. Uses: `drizzle-orm` (`^0.33.0`).
 
 ### Mongoose
 
@@ -1353,7 +1310,7 @@ db: typeorm(dataSource)
 
 `typeorm(dataSource: DataSource): DbAdapter`. `transaction` delegates to `dataSource.transaction(fn)` (`fn` receives an `EntityManager`). `healthcheck` runs `dataSource.query('SELECT 1')`. `close` calls `dataSource.destroy()`.
 
-Error normalization inspects the driver error code: Postgres `23505` or MySQL `ER_DUP_ENTRY` → `Conflict`. Peer dependencies: `typeorm` (`^0.3.20`), `reflect-metadata` (`^0.2.2`, required by TypeORM's decorators).
+Error normalization inspects the driver error code: Postgres `23505` or MySQL `ER_DUP_ENTRY` → `Conflict`. Uses: `typeorm` (`^0.3.20`), `reflect-metadata` (`^0.2.2`, required by TypeORM's decorators).
 
 ### Sequelize
 
@@ -1428,7 +1385,7 @@ interface BrokerConsumeOptions {
 }
 ```
 
-| Adapter | Subpath | Broker | Outbox support | Peer dependency |
+| Adapter | Subpath | Broker | Outbox support | Underlying library |
 |---|---|---|---|---|
 | [RabbitMQ](#rabbitmq) | `/rabbitmq` | AMQP 0-9-1 | yes | `amqplib` |
 | [Kafka](#kafka) | `/kafka` | Kafka, Redpanda | yes | `kafkajs` |
@@ -1533,7 +1490,7 @@ import { memoryBroker } from '@api-kickstart/api-kickstart/memory'
 broker: memoryBroker({ deliverOnPublish: true })   // default true
 ```
 
-`MemoryBrokerOptions`: `{ deliverOnPublish?: boolean /* default true */ }`. Returns a `MemoryBrokerAdapter` — a `BrokerAdapter` extended with a `published: { topic; message }[]` array recording everything ever published, for assertions in tests. Unlike `mqtt`'s single-handler-per-topic, multiple `consume()` calls for the same topic all get delivered (fan-out). No peer dependency — this is also what `@api-kickstart/api-kickstart/testing`'s `memoryBroker()` re-exports for use in `createTestApp()`. See [Testing](#testing).
+`MemoryBrokerOptions`: `{ deliverOnPublish?: boolean /* default true */ }`. Returns a `MemoryBrokerAdapter` — a `BrokerAdapter` extended with a `published: { topic; message }[]` array recording everything ever published, for assertions in tests. Unlike `mqtt`'s single-handler-per-topic, multiple `consume()` calls for the same topic all get delivered (fan-out). Nothing extra to install — this is also what `@api-kickstart/api-kickstart/testing`'s `memoryBroker()` re-exports for use in `createTestApp()`. See [Testing](#testing).
 
 ### Publishing
 
@@ -1674,7 +1631,7 @@ app.route({
 | `forcePathStyle` | `boolean` | optional, see above |
 | `credentials` | `{ accessKeyId: string; secretAccessKey: string }` | optional |
 
-`put()` sets `ContentType`/`ContentLength` from `meta`. `get()` returns `null` specifically when the object doesn't exist (S3's `NoSuchKey` error), and rethrows any other error. `getSignedUrl()` presigns via `@aws-sdk/s3-request-presigner`, `expiresInSeconds` defaulting to `900` (15 minutes). Peer dependencies: `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` (both `^3.635.0`).
+`put()` sets `ContentType`/`ContentLength` from `meta`. `get()` returns `null` specifically when the object doesn't exist (S3's `NoSuchKey` error), and rethrows any other error. `getSignedUrl()` presigns via `@aws-sdk/s3-request-presigner`, `expiresInSeconds` defaulting to `900` (15 minutes). Uses: `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` (both `^3.635.0`).
 
 ### Writing your own storage adapter
 
@@ -1702,7 +1659,7 @@ import { pinoLogger } from '@api-kickstart/api-kickstart/pino'
 createApp({ logger: pinoLogger({ pinoOptions: { level: 'info' } }) })
 ```
 
-`PinoLoggerOptions`: `{ instance?: PinoInstance /* pre-built pino Logger, takes precedence */; pinoOptions?: PinoOptions /* pino's own LoggerOptions, used only when instance isn't supplied */ }`. `child(bindings)` calls the underlying pino instance's `.child()` and re-wraps the result, so child loggers (e.g. `ctx.logger` with `requestId` bound in) also satisfy the `Logger` interface. Peer dependency: `pino` (`^9.4.0`).
+`PinoLoggerOptions`: `{ instance?: PinoInstance /* pre-built pino Logger, takes precedence */; pinoOptions?: PinoOptions /* pino's own LoggerOptions, used only when instance isn't supplied */ }`. `child(bindings)` calls the underlying pino instance's `.child()` and re-wraps the result, so child loggers (e.g. `ctx.logger` with `requestId` bound in) also satisfy the `Logger` interface. Uses: `pino` (`^9.4.0`).
 
 ### Writing your own logger
 
@@ -1749,7 +1706,7 @@ interface Lock {
 }
 ```
 
-Peer dependency for the whole `/redis` subpath: `ioredis` (`^5.4.1`) — the same one used by [Redis Streams](#redis-streams).
+Uses `ioredis` (`^5.4.1`) for the whole `/redis` subpath — the same one used by [Redis Streams](#redis-streams).
 
 ---
 
@@ -1799,7 +1756,7 @@ interface FrameworkAdapter {
 }
 ```
 
-| Adapter | Subpath | Framework | Peer dependency |
+| Adapter | Subpath | Framework | Underlying library |
 |---|---|---|---|
 | [Express](#express) | `/express` | Express 4 and 5 | `express` |
 | [Fastify](#fastify) | `/fastify` | Fastify 4 and 5 | `fastify` |
@@ -1866,7 +1823,7 @@ import { nest } from '@api-kickstart/api-kickstart/nest'
 framework: nest()   // takes no options
 ```
 
-`nest(): FrameworkAdapter`. Importing this adapter has the side effect of importing `'reflect-metadata'`, required for Nest's decorators — make sure it's installed. Internally builds a `NestExpressApplication` via `NestFactory.create(KickstartModule, { logger: false, bodyParser: false })` and mounts a catch-all controller that forwards every request into api-kickstart's own dispatch — Nest's own routing/decorators/DI aren't used for your `app.route()` definitions, only as the HTTP transport. Peer dependencies: `@nestjs/common`, `@nestjs/core`, `@nestjs/platform-express`, `reflect-metadata`, `rxjs` (and transitively `express`, since Nest's platform-express mounts it).
+`nest(): FrameworkAdapter`. Importing this adapter has the side effect of importing `'reflect-metadata'`, required for Nest's decorators. Internally builds a `NestExpressApplication` via `NestFactory.create(KickstartModule, { logger: false, bodyParser: false })` and mounts a catch-all controller that forwards every request into api-kickstart's own dispatch — Nest's own routing/decorators/DI aren't used for your `app.route()` definitions, only as the HTTP transport. Uses: `@nestjs/common`, `@nestjs/core`, `@nestjs/platform-express`, `reflect-metadata`, `rxjs` (and transitively `express`, since Nest's platform-express mounts it).
 
 ### Node `http`
 
@@ -2112,7 +2069,7 @@ Use them if they fit. They handle authentication well and stop there. This cover
 No. Every option is optional. Use it for auth and scope only, or as a broker consumer runner with no HTTP at all.
 
 **Do I have to install every adapter's dependency?**
-No — see [Install](#install). Every adapter's underlying library is an optional peer dependency; only install what you actually import.
+No — see [Install](#install). Every adapter's underlying library ships bundled with the package; `npm install @api-kickstart/api-kickstart` is the only install step, for anything you use.
 
 **Is it safe to write my own auth?**
 Not the cryptography, and this package doesn't. `jose` handles JWT signing/verification, `node:crypto`'s `scrypt` handles password hashing. What's here is the wiring around them, which is where most real bugs live.
@@ -2169,7 +2126,7 @@ Tests run with `vitest` (`npm test`), linting with `eslint` (`npm run lint`), an
 - [x] `auditLog()` — structured "who did what" middleware, pluggable sink
 - [x] `openapi({ serve })` renders a real interactive docs page (Scalar), not just the raw JSON spec again
 - [x] `app.schedule({ lock })` — `redisLock` runs a scheduled task once per cluster instead of once per instance
-- [x] Consolidated from 30 separately published packages into one (`@api-kickstart/api-kickstart`) with adapters as optional-peer-dependency subpath exports
+- [x] Consolidated from 30 separately published packages into one (`@api-kickstart/api-kickstart`) with adapters as bundled subpath exports — one `npm install`, no picking adapters up front
 - [ ] `scopeAudit` can't verify a handler that reads `ctx.scope` but doesn't actually apply it to the query it runs — only "never touched it at all" is detectable without per-adapter query interception
 - [ ] `app.resource()`'s generated `list` action has no pagination, sorting, or filtering beyond the scope filter
 - [ ] `apiKey()` has no built-in rate limiting — compose it with the `rateLimit` middleware/route option yourself
