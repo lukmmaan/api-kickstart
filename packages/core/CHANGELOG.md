@@ -1,5 +1,11 @@
 # @api-kickstart/core
 
+## 1.1.1
+
+### Patch Changes
+
+- Add `keywords`, `homepage`, `repository`, `bugs`, and `author` to package.json. These were missing entirely, which hurts npm search ranking and quality scoring (npms.io) and means the npm package page had no link back to the GitHub repo.
+
 ## 1.1.0
 
 ### Minor Changes
