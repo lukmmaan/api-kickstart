@@ -1,5 +1,17 @@
 # @api-kickstart/core
 
+## 1.1.0
+
+### Minor Changes
+
+- Every adapter's underlying library (`express`, `pg`, `zod`, `pino`, all 30+ of them) is now a regular `dependency` instead of an optional peer dependency. `npm install @api-kickstart/api-kickstart` is now the only install step — no more separately installing the framework/database/broker/validator library for each adapter you use. This makes `node_modules` significantly larger (everything is installed regardless of which subpaths you actually import), which is the explicit tradeoff for a single-command install. `@prisma/client` remains the one exception, since it has to be generated against your own schema.
+
+## 1.0.1
+
+### Patch Changes
+
+- Include the repository's README (and LICENSE) in the published npm package, so it renders on the npm package page. Previously the package had no README at all, since `packages/core` never had its own copy.
+
 ## 1.0.0
 
 ### Major Changes
