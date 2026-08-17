@@ -3,6 +3,7 @@ import type { DbAdapter, ScopeFilter } from '../../index.js'
 import { normalizeMongoError } from './errors.js'
 
 export { mongodbOutboxStore, type MongodbOutboxStoreOptions } from './outbox.js'
+export { mongodbLock, type MongodbLockOptions } from './lock.js'
 
 export interface MongodbOptions {
   dbName?: string

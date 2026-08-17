@@ -1,5 +1,7 @@
 import type { BrokerAdapter, BrokerConsumeOptions } from '../../index.js'
 
+export { memoryLock } from './lock.js'
+
 export interface MemoryBrokerOptions {
   deliverOnPublish?: boolean
 }

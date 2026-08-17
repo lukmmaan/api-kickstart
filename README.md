@@ -101,7 +101,8 @@ None of it is hard. All of it is tedious, and every copy drifts a little further
   - [Writing your own storage adapter](#writing-your-own-storage-adapter)
 - [Logging](#logging)
   - [Writing your own logger](#writing-your-own-logger)
-- [Redis-backed stores and lock](#redis-backed-stores-and-lock)
+- [Redis-backed stores](#redis-backed-stores)
+- [Distributed locks](#distributed-locks)
 - [Webhooks](#webhooks)
 - [Framework adapters](#framework-adapters)
   - [Express](#express)
@@ -355,7 +356,7 @@ interface SessionStore {
 }
 ```
 
-`memoryStore()` (imported from the same `/auth` subpath) is the built-in in-memory implementation, useful for local dev and tests. For anything that needs to survive a restart or run behind more than one instance, use `redisSessionStore()` from [Redis-backed stores](#redis-backed-stores-and-lock), or implement `SessionStore` against your own database.
+`memoryStore()` (imported from the same `/auth` subpath) is the built-in in-memory implementation, useful for local dev and tests. For anything that needs to survive a restart or run behind more than one instance, use `redisSessionStore()` from [Redis-backed stores](#redis-backed-stores), or implement `SessionStore` against your own database.
 
 Session IDs are regenerated (`randomUUID()`) every time `create()` is called — i.e. on every login — to prevent session fixation.
 
@@ -1298,7 +1299,7 @@ app.route({
 })
 ```
 
-`rateLimit`, `idempotency`, and `cache` each accept a `store` option (`RateLimitStore` / `IdempotencyStore` / `CacheStore`) — the in-memory default (`memoryRateLimitStore`/`memoryIdempotencyStore`/`memoryCacheStore`, all exported alongside their middleware from `/middleware`) is fine for a single instance. For anything running more than one instance behind a load balancer, see [Redis-backed stores](#redis-backed-stores-and-lock).
+`rateLimit`, `idempotency`, and `cache` each accept a `store` option (`RateLimitStore` / `IdempotencyStore` / `CacheStore`) — the in-memory default (`memoryRateLimitStore`/`memoryIdempotencyStore`/`memoryCacheStore`, all exported alongside their middleware from `/middleware`) is fine for a single instance. For anything running more than one instance behind a load balancer, see [Redis-backed stores](#redis-backed-stores).
 
 `csrf()` implements the double-submit-cookie pattern. `CsrfOptions`: `{ cookieName?: string /* default 'csrf_token' */; headerName?: string /* default 'x-csrf-token' */; safeMethods?: string[] /* default ['GET','HEAD','OPTIONS'] */; cookie?: { secure?: boolean /* default true */; sameSite?: 'strict'|'lax'|'none' /* default 'lax' */; path?: string /* default '/' } }`. On a safe method it issues the cookie if the client doesn't already have one; on any other method it requires the header to match the cookie, or responds `403` (`Forbidden`). It's for cookie/session-based auth — bearer-token APIs (the default `jwt()` setup) aren't vulnerable to CSRF and don't need it.
 
@@ -1901,12 +1902,12 @@ Implement the `Logger` interface shown above to wire in Winston, Bunyan, or a re
 
 ---
 
-## Redis-backed stores and lock
+## Redis-backed stores
 
-The in-memory defaults for `rateLimit`, `idempotency`, `cache`, and `session` (and the lock used by `app.schedule()`) are fine for a single instance. For anything running more than one instance behind a load balancer, `@api-kickstart/api-kickstart/redis` provides real Redis-backed implementations of all five:
+The in-memory defaults for `rateLimit`, `idempotency`, `cache`, and `session` are fine for a single instance. For anything running more than one instance behind a load balancer, `@api-kickstart/api-kickstart/redis` provides real Redis-backed implementations of all four:
 
 ```ts
-import { redisRateLimitStore, redisIdempotencyStore, redisCacheStore, redisSessionStore, redisLock } from '@api-kickstart/api-kickstart/redis'
+import { redisRateLimitStore, redisIdempotencyStore, redisCacheStore, redisSessionStore } from '@api-kickstart/api-kickstart/redis'
 import { rateLimit, idempotency, cache } from '@api-kickstart/api-kickstart/middleware'
 import { session } from '@api-kickstart/api-kickstart/auth'
 
@@ -1927,11 +1928,16 @@ Shared `RedisStoreOptions` (every factory below accepts this bag): `{ url?: stri
 |---|---|---|---|
 | `redisCacheStore(options?)` | `CacheStore` | `(options: RedisStoreOptions = {}) => CacheStore` | keys namespaced `<prefix>cache:<key>`, `SET ... PX <ttlMs>` |
 | `redisIdempotencyStore(options?)` | `IdempotencyStore` | `(options: RedisStoreOptions = {}) => IdempotencyStore` | keys `<prefix>idempotency:<key>` |
-| `redisRateLimitStore(window, options?)` | `RateLimitStore` | `(window: string, options: RedisStoreOptions = {}) => RateLimitStore` | **note the required leading `window` argument** (e.g. `'1m'`) — the only one of the five that isn't options-only; `INCR` + `PEXPIRE` only on the first hit (fixed-window counter) |
+| `redisRateLimitStore(window, options?)` | `RateLimitStore` | `(window: string, options: RedisStoreOptions = {}) => RateLimitStore` | **note the required leading `window` argument** (e.g. `'1m'`) — the only one of the four that isn't options-only; `INCR` + `PEXPIRE` only on the first hit (fixed-window counter) |
 | `redisSessionStore(options?)` | `SessionStore` | `(options: RedisStoreOptions = {}) => SessionStore` | keys `<prefix>session:<sid>`; `set()` with an already-past `expiresAt` deletes instead of writing |
-| `redisLock(options?)` | `Lock` | `(options: RedisStoreOptions = {}) => Lock` | `acquire` = atomic `SET key token PX ttlMs NX`; `release` runs a Lua script that only deletes if the caller's token still matches — safe against releasing a lock you no longer hold |
 
-`Lock` interface (also relevant to [Scheduled tasks](#scheduled-tasks)):
+Uses `ioredis` (`^5.4.1`) for the whole `/redis` subpath — the same one used by [Redis Streams](#redis-streams).
+
+---
+
+## Distributed locks
+
+The `Lock` interface backs `app.schedule({ lock })` (see [Scheduled tasks](#scheduled-tasks)) and is useful anywhere you need "only one of these should run at a time" — a cron-like job, a webhook handler that must not process the same event twice concurrently, a leader-election check:
 
 ```ts
 interface Lock {
@@ -1940,7 +1946,35 @@ interface Lock {
 }
 ```
 
-Uses `ioredis` (`^5.4.1`) for the whole `/redis` subpath — the same one used by [Redis Streams](#redis-streams).
+`acquire` returns `true` if the caller now holds `key` (and starts a TTL clock), or `false` if someone else already holds it. Every implementation below tracks its own acquire token internally and only lets `release()` remove a lock it's still holding — a slow caller that outlives its TTL and calls `release()` late can't accidentally evict whoever re-acquired the key after it expired.
+
+Pick a backend based on what you already run — **redis**, **db** (any SQL dialect via `knex`, or `pg`/`mongodb` directly), or **constant** (in-process, no dependency):
+
+```ts
+import { redisLock } from '@api-kickstart/api-kickstart/redis'
+import { pgLock } from '@api-kickstart/api-kickstart/pg'
+import { knexLock } from '@api-kickstart/api-kickstart/knex'
+import { mongodbLock } from '@api-kickstart/api-kickstart/mongodb'
+import { memoryLock } from '@api-kickstart/api-kickstart/memory'
+
+const lock = redisLock({ url: env.REDIS_URL })          // or:
+const lock2 = pgLock(pgPool)                              // Postgres, a lease table with expires_at
+const lock3 = knexLock(knexClient)                         // any knex dialect (mysql, sqlite, mssql, ...)
+const lock4 = mongodbLock(mongoDb)                          // MongoDB, upsert-on-expiry + duplicate-key race guard
+const lock5 = memoryLock()                                  // single process only, no external dependency
+```
+
+| Factory | Backend | Signature | Storage |
+|---|---|---|---|
+| `redisLock(options?)` | Redis | `(options: RedisStoreOptions = {}) => Lock` | atomic `SET key token PX ttlMs NX`; release runs a Lua script that only deletes if the token still matches |
+| `pgLock(pool, options?)` | Postgres | `(pool: Pool, options: PgLockOptions = {}) => Lock` | lazily creates a `_api_kickstart_locks` table; acquire either steals an expired row (`UPDATE ... WHERE expires_at <= now()`) or inserts a fresh one, relying on the primary key to reject a second concurrent insert |
+| `knexLock(client, options?)` | any SQL dialect knex supports | `(client: Knex, options: KnexLockOptions = {}) => Lock` | same lease-table strategy as `pgLock`, portable across `mysql`, `sqlite`, `mssql`, and more |
+| `mongodbLock(db, options?)` | MongoDB | `(db: Db, options: MongodbLockOptions = {}) => Lock` | `findOneAndUpdate` with `upsert: true`, filtered to expired-or-absent documents; a still-held lock trips MongoDB's own duplicate-key error on the upsert insert, which is caught and reported as `false` |
+| `memoryLock()` | none (in-process) | `() => Lock` | a module-level `Map`, shared by every `memoryLock()` call in the same process — coordinates threads/callers within one instance, not across instances |
+
+`PgLockOptions`/`KnexLockOptions`: `{ tableName?: string /* default '_api_kickstart_locks' */; ensureTable?: boolean /* default true */ }`. `MongodbLockOptions`: `{ collectionName?: string /* default '_api_kickstart_locks' */ }`. All three DB-backed locks create their table/collection on first use — set `ensureTable: false` (pg/knex) if you manage migrations yourself.
+
+`redisLock`/`pgLock`/`knexLock`/`mongodbLock` all coordinate across processes and instances; `memoryLock` only coordinates within one. Use `memoryLock` for local dev/tests or a genuinely single-instance deployment, and one of the other four once you're running more than one instance of your app.
 
 ---
 
@@ -2188,7 +2222,7 @@ app.schedule(
 )
 ```
 
-Every instance's timer fires on the same cadence; whichever one wins the `SET NX PX` race for that tick runs the handler, the rest skip it silently. The lock's TTL defaults to the task's `interval` (override with `lockTtlMs`) and is released right after the handler finishes — including when it throws — so a slow or crashed instance can't hold the cluster hostage past one interval. Without `lock`, it's `setInterval`, once per instance, same as before. `lock` accepts any `Lock` implementation, not just `redisLock` — see [Redis-backed stores](#redis-backed-stores-and-lock).
+Every instance's timer fires on the same cadence; whichever one wins the `SET NX PX` race for that tick runs the handler, the rest skip it silently. The lock's TTL defaults to the task's `interval` (override with `lockTtlMs`) and is released right after the handler finishes — including when it throws — so a slow or crashed instance can't hold the cluster hostage past one interval. Without `lock`, it's `setInterval`, once per instance, same as before. `lock` accepts any `Lock` implementation — `redisLock`, `pgLock`, `knexLock`, `mongodbLock`, or `memoryLock` — see [Distributed locks](#distributed-locks).
 
 ---
 
@@ -2286,7 +2320,7 @@ Not yet automated — verify these yourself:
 - [ ] Broker consumers are idempotent when an outbox is enabled (see [Transactional outbox](#transactional-outbox))
 - [ ] Passwords are stored via `hashPassword()`, never plain text (`doctor` has no way to inspect your database)
 - [ ] `csrf()` is in the middleware chain for any route reachable via cookie/session auth (bearer-token routes don't need it)
-- [ ] A non-default `RefreshStore`/`SessionStore`/rate-limit-etc. store is configured if you run more than one instance (the built-in defaults are in-memory per process — see [Redis-backed stores](#redis-backed-stores-and-lock))
+- [ ] A non-default `RefreshStore`/`SessionStore`/rate-limit-etc. store is configured if you run more than one instance (the built-in defaults are in-memory per process — see [Redis-backed stores](#redis-backed-stores))
 - [ ] `app.resource()`'s generated `list` action has no built-in pagination — add it yourself for any table that can grow large (see [CRUD shorthand](#crud-shorthand))
 
 ---
@@ -2359,7 +2393,7 @@ Tests run with `vitest` (`npm test`), linting with `eslint` (`npm run lint`), an
 - [x] `signWebhook()` / `verifyWebhook()` — HMAC-SHA256 with timestamp tolerance, constant-time comparison
 - [x] `auditLog()` — structured "who did what" middleware, pluggable sink
 - [x] `openapi({ serve })` renders a real interactive docs page (Scalar), not just the raw JSON spec again
-- [x] `app.schedule({ lock })` — `redisLock` runs a scheduled task once per cluster instead of once per instance
+- [x] `app.schedule({ lock })` — `redisLock`/`pgLock`/`knexLock`/`mongodbLock`/`memoryLock` run a scheduled task once per cluster (or once per process for `memoryLock`) instead of once per instance
 - [x] Consolidated from 30 separately published packages into one (`@api-kickstart/api-kickstart`) with adapters as bundled subpath exports — one `npm install`, no picking adapters up front
 - [x] `/patterns` — 112 built-in named regex patterns across identifiers, network, security, dates, phone/postal, finance, and dev-ecosystem categories, extensible with your own custom named patterns via `register()`
 - [x] `/dates` — token-based `formatDate()`, 18 named presets via `formatDateAs()`, and `formatDateForDb()` for MySQL/Postgres/SQLite/MongoDB/MSSQL/Oracle-shaped date strings

@@ -1,5 +1,18 @@
 # @api-kickstart/core
 
+## 1.6.0
+
+### Minor Changes
+
+- Add four new `Lock` implementations alongside the existing `redisLock`, so `app.schedule({ lock })` (or any other "only one caller should run this" scenario) can pick a backend without pulling in Redis:
+  
+  - `pgLock(pool, options?)` from `/pg` — a lazily-created Postgres lease table.
+  - `knexLock(client, options?)` from `/knex` — the same lease-table strategy, portable across every SQL dialect knex supports (mysql, sqlite, mssql, ...).
+  - `mongodbLock(db, options?)` from `/mongodb` — an upsert-on-expiry lock document, using MongoDB's own duplicate-key error to detect a still-held lock.
+  - `memoryLock()` from `/memory` — an in-process lock backed by a module-level `Map`, no external dependency, for local dev/tests or a single-instance deployment.
+  
+  All five implementations share the same `Lock` interface (`acquire(key, ttlMs): Promise<boolean>`, `release(key): Promise<void>`) and the same acquire-token-based release safety: a caller can only release a lock it's still holding, so a slow release after the TTL expired can't evict whoever re-acquired the key next.
+
 ## 1.5.0
 
 ### Minor Changes
