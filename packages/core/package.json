@@ -1,6 +1,6 @@
 {
   "name": "@api-kickstart/api-kickstart",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Auth, authorization, validation, CORS, error handling, database, and message broker, wired together with sane defaults, swappable everywhere.",
   "license": "MIT",
   "type": "module",
@@ -169,7 +169,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "cp ../../README.md ./README.md && cp ../../LICENSE ./LICENSE"
   },
   "dependencies": {
     "jose": "^5.9.6",

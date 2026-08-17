@@ -1,5 +1,11 @@
 # @api-kickstart/core
 
+## 1.0.1
+
+### Patch Changes
+
+- Include the repository's README (and LICENSE) in the published npm package, so it renders on the npm package page. Previously the package had no README at all, since `packages/core` never had its own copy.
+
 ## 1.0.0
 
 ### Major Changes
