@@ -12,17 +12,49 @@ function pad(value: number, length = 2): string {
   return String(value).padStart(length, '0')
 }
 
-export function formatDate(date: Date, pattern: string): string {
-  const year = date.getFullYear()
-  const month = date.getMonth()
-  const day = date.getDate()
-  const hours24 = date.getHours()
+interface DateFields {
+  year: number
+  month: number
+  day: number
+  hours24: number
+  minutes: number
+  seconds: number
+  milliseconds: number
+  dayOfWeek: number
+  tzOffsetMinutes: number
+}
+
+function localFields(date: Date): DateFields {
+  return {
+    year: date.getFullYear(),
+    month: date.getMonth(),
+    day: date.getDate(),
+    hours24: date.getHours(),
+    minutes: date.getMinutes(),
+    seconds: date.getSeconds(),
+    milliseconds: date.getMilliseconds(),
+    dayOfWeek: date.getDay(),
+    tzOffsetMinutes: -date.getTimezoneOffset(),
+  }
+}
+
+function utcFields(date: Date): DateFields {
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth(),
+    day: date.getUTCDate(),
+    hours24: date.getUTCHours(),
+    minutes: date.getUTCMinutes(),
+    seconds: date.getUTCSeconds(),
+    milliseconds: date.getUTCMilliseconds(),
+    dayOfWeek: date.getUTCDay(),
+    tzOffsetMinutes: 0,
+  }
+}
+
+function formatFields(fields: DateFields, pattern: string): string {
+  const { year, month, day, hours24, minutes, seconds, milliseconds, dayOfWeek, tzOffsetMinutes } = fields
   const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12
-  const minutes = date.getMinutes()
-  const seconds = date.getSeconds()
-  const milliseconds = date.getMilliseconds()
-  const dayOfWeek = date.getDay()
-  const tzOffsetMinutes = -date.getTimezoneOffset()
   const tzSign = tzOffsetMinutes >= 0 ? '+' : '-'
   const tzHours = pad(Math.floor(Math.abs(tzOffsetMinutes) / 60))
   const tzMinutes = pad(Math.abs(tzOffsetMinutes) % 60)
@@ -57,6 +89,14 @@ export function formatDate(date: Date, pattern: string): string {
   })
 }
 
+export function formatDate(date: Date, pattern: string): string {
+  return formatFields(localFields(date), pattern)
+}
+
+export function formatDateUTC(date: Date, pattern: string): string {
+  return formatFields(utcFields(date), pattern)
+}
+
 export const DATE_FORMATS = {
   isoDate: 'YYYY-MM-DD',
   isoDateTime: 'YYYY-MM-DDTHH:mm:ss',
@@ -85,17 +125,25 @@ export function formatDateAs(date: Date, formatName: DateFormatName): string {
   return formatDate(date, DATE_FORMATS[formatName])
 }
 
+export function formatDateAsUTC(date: Date, formatName: DateFormatName): string {
+  return formatDateUTC(date, DATE_FORMATS[formatName])
+}
+
 export type DbDialect = 'mysql' | 'postgres' | 'sqlite' | 'mongodb' | 'mssql' | 'oracle'
 
-const DB_DATE_FORMATTERS: Record<DbDialect, (date: Date) => string> = {
-  mysql: (date) => formatDate(date, 'YYYY-MM-DD HH:mm:ss'),
-  sqlite: (date) => formatDate(date, 'YYYY-MM-DD HH:mm:ss'),
-  postgres: (date) => formatDate(date, 'YYYY-MM-DD HH:mm:ss.SSS'),
-  mssql: (date) => formatDate(date, 'YYYY-MM-DD HH:mm:ss.SSS'),
-  oracle: (date) => formatDate(date, 'DD-MMM-YYYY').toUpperCase(),
+export interface FormatDateForDbOptions {
+  utc?: boolean
+}
+
+const DB_DATE_FORMATTERS: Record<DbDialect, (date: Date, utc: boolean) => string> = {
+  mysql: (date, utc) => (utc ? formatDateUTC : formatDate)(date, 'YYYY-MM-DD HH:mm:ss'),
+  sqlite: (date, utc) => (utc ? formatDateUTC : formatDate)(date, 'YYYY-MM-DD HH:mm:ss'),
+  postgres: (date, utc) => (utc ? formatDateUTC : formatDate)(date, 'YYYY-MM-DD HH:mm:ss.SSS'),
+  mssql: (date, utc) => (utc ? formatDateUTC : formatDate)(date, 'YYYY-MM-DD HH:mm:ss.SSS'),
+  oracle: (date, utc) => (utc ? formatDateUTC : formatDate)(date, 'DD-MMM-YYYY').toUpperCase(),
   mongodb: (date) => date.toISOString(),
 }
 
-export function formatDateForDb(date: Date, dialect: DbDialect): string {
-  return DB_DATE_FORMATTERS[dialect](date)
+export function formatDateForDb(date: Date, dialect: DbDialect, options: FormatDateForDbOptions = {}): string {
+  return DB_DATE_FORMATTERS[dialect](date, options.utc ?? true)
 }

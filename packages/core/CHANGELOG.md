@@ -1,5 +1,13 @@
 # @api-kickstart/core
 
+## 1.5.0
+
+### Minor Changes
+
+- Add UTC support to `/dates`: `formatDateUTC(date, pattern)` and `formatDateAsUTC(date, formatName)` format a `Date` using its UTC fields (year, month, day, hour, day-of-week, and a `+00:00`/`+0000` offset for `Z`/`ZZ`) instead of the process's local time.
+  
+  `formatDateForDb` now defaults to UTC output for every dialect (previously `mysql`/`postgres`/`sqlite`/`mssql`/`oracle` used local server time, which silently produced different strings depending on where the process ran; `mongodb` was already UTC via `toISOString()`). Pass `{ utc: false }` to keep the old local-time behavior.
+
 ## 1.4.0
 
 ### Minor Changes

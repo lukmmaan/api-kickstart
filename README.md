@@ -874,14 +874,16 @@ Several of the built-ins are deliberately loose *shape* checks rather than exhau
 ## Date formatting
 
 ```ts
-import { formatDate, formatDateAs, formatDateForDb, DATE_FORMATS } from '@api-kickstart/api-kickstart/dates'
+import { formatDate, formatDateUTC, formatDateAs, formatDateAsUTC, formatDateForDb, DATE_FORMATS } from '@api-kickstart/api-kickstart/dates'
 
-formatDate(new Date(), 'YYYY-MM-DD HH:mm:ss')     // '2024-01-05 09:07:03'
+formatDate(new Date(), 'YYYY-MM-DD HH:mm:ss')      // local time, e.g. '2024-01-05 09:07:03'
+formatDateUTC(new Date(), 'YYYY-MM-DD HH:mm:ss')   // UTC, e.g. '2024-01-05 02:07:03'
 formatDateAs(new Date(), 'usDate')                 // '01/05/2024', via the named DATE_FORMATS below
-formatDateForDb(new Date(), 'postgres')            // '2024-01-05 09:07:03.045'
+formatDateAsUTC(new Date(), 'isoDateTimeTz')       // same presets, UTC fields + '+00:00' offset
+formatDateForDb(new Date(), 'postgres')            // UTC by default, e.g. '2024-01-05 02:07:03.045'
 ```
 
-`formatDate(date, pattern)` replaces tokens in `pattern` using the `Date`'s **local** time (same convention as `date-fns`/`dayjs`'s `format()`) — pass a UTC-adjusted `Date` yourself if you need UTC output instead:
+`formatDate(date, pattern)` replaces tokens in `pattern` using the `Date`'s **local** (server) time (same convention as `date-fns`/`dayjs`'s `format()`). `formatDateUTC(date, pattern)` is the same token replacement but reads every field — year, month, day, hour, day-of-week, and the `Z`/`ZZ` offset — off the `Date`'s UTC representation instead, so output is identical no matter what timezone the process runs in. `formatDateAs`/`formatDateAsUTC` are the local/UTC counterparts for the named presets below:
 
 | Token | Meaning | Example |
 |---|---|---|
@@ -923,14 +925,21 @@ DATE_FORMATS.logTimestamp      // 'YYYY-MM-DD HH:mm:ss.SSS'
 DATE_FORMATS.fileNameSafe      // 'YYYY-MM-DD_HH-mm-ss'
 ```
 
-`formatDateForDb(date, dialect)` formats a `Date` the way a given database dialect expects it in a raw query or string column, so you're not hand-rolling `toISOString().slice(...)` per adapter:
+`formatDateForDb(date, dialect, options?)` formats a `Date` the way a given database dialect expects it in a raw query or string column, so you're not hand-rolling `toISOString().slice(...)` per adapter:
 
-| `dialect` | Output format | Example |
+| `dialect` | Output format | Example (UTC) |
 |---|---|---|
 | `'mysql'` / `'sqlite'` | `YYYY-MM-DD HH:mm:ss` | `2024-01-05 09:07:03` |
 | `'postgres'` / `'mssql'` | `YYYY-MM-DD HH:mm:ss.SSS` | `2024-01-05 09:07:03.045` |
 | `'oracle'` | `DD-MON-YYYY` (uppercase) | `05-JAN-2024` |
 | `'mongodb'` | native `Date.prototype.toISOString()` | `2024-01-05T09:07:03.045Z` |
+
+**`formatDateForDb` defaults to UTC** for every dialect (`mongodb` already did, via `toISOString()`) — a raw date string headed for a database shouldn't silently depend on whatever timezone the server process happens to run in. Pass `{ utc: false }` to opt back into the process's local time instead:
+
+```ts
+formatDateForDb(new Date(), 'mysql')                    // UTC (default)
+formatDateForDb(new Date(), 'mysql', { utc: false })     // local server time
+```
 
 This is a formatter, not a parameterized-query builder — most adapters in this package (`pg`, `knex`, `mongoose`, ...) accept a native `Date` object directly and don't need string formatting at all; reach for `formatDateForDb` specifically when you're building a raw SQL string or need a DB-shaped string for something other than a bound query parameter (a filename, a log line, a CSV export, a legacy column expecting text).
 
