@@ -5,6 +5,7 @@ import {
   parseResourceList,
   PROJECT_THEMES,
   resourceNames,
+  type AuthChoice,
   type ScaffoldChoice,
   type ScaffoldFile,
   type ScaffoldResource,
@@ -20,6 +21,17 @@ export interface ScaffoldWizardOptions {
   isInteractive?: boolean
 }
 
+const AUTH_CHOICES: { id: AuthChoice; label: string }[] = [
+  { id: 'jwt', label: 'JWT (login/refresh/logout/me routes)' },
+  { id: 'apiKey', label: 'API key (x-api-key header)' },
+  { id: 'both', label: 'Both (JWT + API key)' },
+]
+
+const YES_NO = [
+  { id: 'yes', label: 'Yes' },
+  { id: 'no', label: 'No' },
+]
+
 export async function runScaffoldWizard(
   selections: Record<string, string[]>,
   cwd: string,
@@ -31,6 +43,9 @@ export async function runScaffoldWizard(
   const rl = options.prompter ?? createPrompter()
   let themeId: string | null
   const resources: ScaffoldResource[] = []
+  let authId: AuthChoice = 'none'
+  let authorization = false
+  let i18n = false
 
   try {
     themeId = await promptChoice(
@@ -57,6 +72,30 @@ export async function runScaffoldWizard(
       )
       resources.push({ input, fields: parseFields(fieldsAnswer) })
     }
+
+    const authAnswer = await promptChoice(
+      rl,
+      'Authentication',
+      'Which authentication strategy do you want to scaffold?',
+      AUTH_CHOICES,
+    )
+    authId = (authAnswer as AuthChoice | null) ?? 'none'
+
+    const authorizationAnswer = await promptChoice(
+      rl,
+      'Authorization',
+      'Generate a real roles & scope example (role hierarchy, plus roles enforced on the create route of every resource)?',
+      YES_NO,
+    )
+    authorization = authorizationAnswer === 'yes'
+
+    const i18nAnswer = await promptChoice(
+      rl,
+      'Internationalization',
+      'Generate an i18n setup too (in-memory dictionary + locale-detection middleware)?',
+      YES_NO,
+    )
+    i18n = i18nAnswer === 'yes'
   } finally {
     rl.close?.()
   }
@@ -69,6 +108,9 @@ export async function runScaffoldWizard(
     databaseId: selections.database?.[0] ?? 'none',
     validatorId: selections.validation?.[0] ?? 'none',
     resources,
+    authId,
+    authorization,
+    i18n,
   }
 
   const files = theme.generate(choice)

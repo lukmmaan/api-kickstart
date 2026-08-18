@@ -109,6 +109,9 @@ function baseChoice(overrides: Partial<ScaffoldChoice> = {}): ScaffoldChoice {
     databaseId: 'pg',
     validatorId: 'zod',
     resources: [resource('posts')],
+    authId: 'none',
+    authorization: false,
+    i18n: false,
     ...overrides,
   }
 }
@@ -261,6 +264,93 @@ describe('layered theme generate()', () => {
     expect(files.map((f) => f.path)).toContain('src/models/users.model.ts')
     const model = files.find((f) => f.path === 'src/models/users.model.ts')!.contents
     expect(model).toContain('name: string')
+  })
+
+  it('omits config/auth.ts, roles.ts, and i18n.ts, and their app.ts wiring, when all three are skipped', () => {
+    const files = theme.generate(baseChoice())
+    expect(files.find((f) => f.path === 'src/config/auth.ts')).toBeUndefined()
+    expect(files.find((f) => f.path === 'src/config/roles.ts')).toBeUndefined()
+    expect(files.find((f) => f.path === 'src/config/i18n.ts')).toBeUndefined()
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).not.toContain('auth.js')
+    expect(app).not.toContain('roles.js')
+    expect(app).not.toContain('i18n.js')
+    expect(app).not.toContain('useAuthRoutes')
+    const routes = files.find((f) => f.path === 'src/routes/posts.routes.ts')!.contents
+    expect(routes).toContain('auth: false,')
+    expect(routes).not.toContain('roles:')
+  })
+
+  it('scaffolds a jwt-only auth config and wires useAuthRoutes', () => {
+    const files = theme.generate(baseChoice({ authId: 'jwt' }))
+    const auth = files.find((f) => f.path === 'src/config/auth.ts')!.contents
+    expect(auth).toContain(`import { hashPassword, jwt, verifyPassword } from '@api-kickstart/api-kickstart/auth'`)
+    expect(auth).toContain('export const auth = jwt({')
+    expect(auth).not.toContain('apiKey')
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).toContain(`import { auth } from './config/auth.js'`)
+    expect(app).toContain('auth,')
+    expect(app).toContain(
+      `app.useAuthRoutes({ login: '/auth/login', refresh: '/auth/refresh', logout: '/auth/logout', me: '/auth/me' })`,
+    )
+  })
+
+  it('scaffolds an apiKey-only auth config and does not wire useAuthRoutes', () => {
+    const files = theme.generate(baseChoice({ authId: 'apiKey' }))
+    const auth = files.find((f) => f.path === 'src/config/auth.ts')!.contents
+    expect(auth).toContain(`import { apiKey } from '@api-kickstart/api-kickstart/auth'`)
+    expect(auth).toContain('export const auth = apiKey({')
+    expect(auth).not.toContain('jwt(')
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).not.toContain('useAuthRoutes')
+  })
+
+  it('scaffolds both strategies as an array and wires useAuthRoutes', () => {
+    const files = theme.generate(baseChoice({ authId: 'both' }))
+    const auth = files.find((f) => f.path === 'src/config/auth.ts')!.contents
+    expect(auth).toContain('const jwtAuth = jwt({')
+    expect(auth).toContain('const apiKeyAuth = apiKey({')
+    expect(auth).toContain('export const auth = [jwtAuth, apiKeyAuth]')
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).toContain('useAuthRoutes')
+  })
+
+  it('scaffolds a role hierarchy and enforces roles on the create route when authorization is on', () => {
+    const files = theme.generate(baseChoice({ authorization: true }))
+    const roles = files.find((f) => f.path === 'src/config/roles.ts')!.contents
+    expect(roles).toContain(`import type { RoleHierarchy } from '@api-kickstart/api-kickstart'`)
+    expect(roles).toContain('admin:')
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).toContain(`import { roleHierarchy } from './config/roles.js'`)
+    expect(app).toContain('roleHierarchy,')
+    const routes = files.find((f) => f.path === 'src/routes/posts.routes.ts')!.contents
+    expect(routes).toContain('auth: true,')
+    expect(routes).toContain(`roles: ['admin', 'editor'],`)
+    // the GET route stays public even with authorization on
+    expect(routes).toContain(`auth: false,\n  handler: listPostsHandler,`)
+  })
+
+  it('scaffolds an i18n config with dictionaries and wires its middleware into app.ts', () => {
+    const files = theme.generate(baseChoice({ i18n: true }))
+    const i18nFile = files.find((f) => f.path === 'src/config/i18n.ts')!.contents
+    expect(i18nFile).toContain(`import { createI18n } from '@api-kickstart/api-kickstart/i18n'`)
+    expect(i18nFile).toContain('dictionaries:')
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).toContain(`import { i18n } from './config/i18n.js'`)
+    expect(app).toContain('middleware: [requestTimer, i18n.middleware],')
+  })
+
+  it('combines auth, authorization, and i18n together in one app.ts', () => {
+    const files = theme.generate(baseChoice({ authId: 'both', authorization: true, i18n: true }))
+    const paths = files.map((f) => f.path)
+    expect(paths).toContain('src/config/auth.ts')
+    expect(paths).toContain('src/config/roles.ts')
+    expect(paths).toContain('src/config/i18n.ts')
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).toContain('auth,')
+    expect(app).toContain('roleHierarchy,')
+    expect(app).toContain('middleware: [requestTimer, i18n.middleware],')
+    expect(app).toContain('useAuthRoutes')
   })
 })
 
