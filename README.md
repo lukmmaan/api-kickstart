@@ -166,12 +166,18 @@ Enter a number, or press enter to skip: 1
 Name your resources — one module gets generated per name (comma-separated, plural, e.g. users, posts):
 [users]: users, posts
 
+Fields for users — name:type, comma-separated (types: string, number, boolean):
+[name:string]: name:string, email:string, age:number, isActive:boolean
+
+Fields for posts — name:type, comma-separated (types: string, number, boolean):
+[name:string]: title:string
+
 Scaffolded 14 file(s) under src/ (2 modules: users, posts) using the "Layered" structure.
 ```
 
-Once the stack is installed, `init` asks one more thing: whether to scaffold a starting folder structure — `config/`, `models/`, `services/`, `controllers/`, `routes/`, `middleware/` (or the model/service/controller/routes four grouped per-feature under `modules/<resource>/` instead) — wired up for the framework, database, and validator you just picked. Name one resource or several, comma-separated (`users, posts, comments`) — each one gets its own real CRUD module (list + create, working end to end); `config/`, `app.ts`, and the example `middleware/requestTimer.middleware.ts` stay shared across all of them. Press enter to skip it if you'd rather lay out your own files. It never overwrites anything that already exists in `src/`.
+Once the stack is installed, `init` asks whether to scaffold a starting folder structure — `config/`, `models/`, `services/`, `controllers/`, `routes/`, `middleware/` (or the model/service/controller/routes four grouped per-feature under `modules/<resource>/` instead) — wired up for the framework, database, and validator you just picked. Name one resource or several, comma-separated (`users, posts, comments`), then **for each one** say what fields it actually has (`name:string, email:string, age:number, isActive:boolean`) — it's not just folders and filenames that get generated, the file *contents* do too: the TS interface, the SQL/ORM query, the validator schema, and the controller's body cast all use those exact fields, per resource. Leave a fields answer blank and that resource gets a single generic `name: string` field instead. `config/`, `app.ts`, and the example `middleware/requestTimer.middleware.ts` stay shared across every resource. Press enter at the structure question to skip the whole step. Nothing here ever overwrites a file that already exists in `src/`.
 
-**What actually lands on disk.** For the transcript above — Express, pg, Zod, Layered, `users, posts` — you get:
+**What actually lands on disk.** For the transcript above — Express, pg, Zod, Layered, `users` (name/email/age/isActive) + `posts` (title) — you get:
 
 ```
 src/
@@ -197,7 +203,7 @@ src/
 └── index.ts
 ```
 
-`src/models/users.model.ts` — adapter-correct queries for whichever database you picked (this is the `pg` version; MongoDB, Mongoose, Knex, TypeORM, Sequelize, and Drizzle each get their own idiomatic version, and skipping the database step gets an in-memory `Map` instead):
+`src/models/users.model.ts` — adapter-correct queries for whichever database you picked, built from the exact fields you typed for `users` (this is the `pg` version; MongoDB, Mongoose, Knex, TypeORM, Sequelize, and Drizzle each get their own idiomatic version with the same fields, and skipping the database step gets an in-memory `Map` instead):
 
 ```ts
 import type { Pool } from 'pg'
@@ -205,7 +211,10 @@ import { db } from '../config/database.js'
 
 export interface User {
   id: string
-  title: string
+  name: string
+  email: string
+  age: number
+  isActive: boolean
   createdAt: string
 }
 
@@ -213,28 +222,28 @@ const pool = () => db.client as Pool
 
 export async function listUsers(): Promise<User[]> {
   const { rows } = await pool().query(
-    'SELECT id, title, created_at AS "createdAt" FROM users ORDER BY created_at DESC',
+    'SELECT id, name, email, age, isActive, created_at AS "createdAt" FROM users ORDER BY created_at DESC',
   )
   return rows
 }
 
-export async function createUser(title: string): Promise<User> {
+export async function createUser(data: { name: string; email: string; age: number; isActive: boolean }): Promise<User> {
   const { rows } = await pool().query(
-    'INSERT INTO users (title) VALUES ($1) RETURNING id, title, created_at AS "createdAt"',
-    [title],
+    'INSERT INTO users (name, email, age, isActive) VALUES ($1, $2, $3, $4) RETURNING id, name, email, age, isActive, created_at AS "createdAt"',
+    [data.name, data.email, data.age, data.isActive],
   )
   return rows[0]
 }
 ```
 
-`src/routes/users.routes.ts` — the schema comes from whichever validator you picked (Zod here; Joi/Yup/Valibot/TypeBox each get their own real schema, and skipping validation drops the `body:` key entirely):
+`src/routes/users.routes.ts` — the schema comes from whichever validator you picked, one entry per field, correctly typed (Zod here; Joi/Yup/Valibot/TypeBox each get their own real schema built the same way, and skipping validation drops the `body:` key entirely):
 
 ```ts
 import { z } from 'zod'
 import { app } from '../app.js'
 import { createUserHandler, listUsersHandler } from '../controllers/users.controller.js'
 
-const createUserSchema = z.object({ title: z.string().min(1) })
+const createUserSchema = z.object({ name: z.string(), email: z.string(), age: z.number(), isActive: z.boolean() })
 
 app.route({
   method: 'GET',
@@ -251,6 +260,8 @@ app.route({
   handler: createUserHandler,
 })
 ```
+
+`posts` in the same run only got one field (`title:string`), so its model, schema, and controller only mention `title` — every resource's generated content matches exactly what you told it that resource has.
 
 `src/middleware/requestTimer.middleware.ts` — the one file every scaffold gets regardless of theme or stack, already wired into `app.ts`'s `middleware: [...]`:
 
@@ -2468,7 +2479,7 @@ npx api-kickstart <command> --config ./path/to/config.mjs
 
 | Command | What it does |
 |---|---|
-| `init` | interactively picks a framework/database/broker(s)/validator/storage/logger and installs exactly those packages, then optionally scaffolds `config/`/`models/`/`services/`/`controllers/`/`routes/`/`middleware/` (or `modules/<resource>/`) — one module per resource you name — wired up for what you picked — see [Install](#install) |
+| `init` | interactively picks a framework/database/broker(s)/validator/storage/logger and installs exactly those packages, then optionally scaffolds `config/`/`models/`/`services/`/`controllers/`/`routes/`/`middleware/` (or `modules/<resource>/`) — one module per resource you name, with the fields you give each one baked into its interface, query, schema, and handler — wired up for what you picked — see [Install](#install) |
 | `add [category]` | the same wizard, for adding more later; an optional category (`framework`, `database`, `broker`, `validation`, `storage`, `logging`) skips straight to it |
 | `doctor` | runs the [production checklist](#production-checklist) against your `App`, exits `1` if any check fails |
 | `env:example` | writes a `.env.example` derived from `envSchema` exported by your config file |

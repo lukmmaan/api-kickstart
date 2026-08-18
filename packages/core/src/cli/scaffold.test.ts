@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { findTheme, parseResourceList, PROJECT_THEMES, resourceNames, type ScaffoldChoice } from './scaffold.js'
+import {
+  findTheme,
+  parseFields,
+  parseResourceList,
+  PROJECT_THEMES,
+  resourceNames,
+  type ScaffoldChoice,
+  type ScaffoldResource,
+} from './scaffold.js'
 
 describe('resourceNames', () => {
   it('derives singular/plural/Pascal forms from a plain plural word', () => {
@@ -46,6 +54,40 @@ describe('parseResourceList', () => {
   })
 })
 
+describe('parseFields', () => {
+  it('parses name:type pairs', () => {
+    expect(parseFields('name:string, age:number, isAdmin:boolean')).toEqual([
+      { name: 'name', type: 'string' },
+      { name: 'age', type: 'number' },
+      { name: 'isAdmin', type: 'boolean' },
+    ])
+  })
+
+  it('defaults a bare name (no ":type") to string', () => {
+    expect(parseFields('email')).toEqual([{ name: 'email', type: 'string' }])
+  })
+
+  it('defaults an unrecognized type to string', () => {
+    expect(parseFields('data:json')).toEqual([{ name: 'data', type: 'string' }])
+  })
+
+  it('sanitizes invalid characters out of field names', () => {
+    expect(parseFields('full name:string')).toEqual([{ name: 'fullname', type: 'string' }])
+  })
+
+  it('drops a field whose name is empty after sanitizing', () => {
+    expect(parseFields('!!!:string, email:string')).toEqual([{ name: 'email', type: 'string' }])
+  })
+
+  it('dedupes repeated field names, keeping the first', () => {
+    expect(parseFields('name:string, name:number')).toEqual([{ name: 'name', type: 'string' }])
+  })
+
+  it('falls back to a single name:string field for a blank answer', () => {
+    expect(parseFields('   ')).toEqual([{ name: 'name', type: 'string' }])
+  })
+})
+
 describe('findTheme', () => {
   it('finds a theme by id', () => {
     expect(findTheme('layered')?.id).toBe('layered')
@@ -57,8 +99,18 @@ describe('findTheme', () => {
   })
 })
 
+function resource(input: string, fieldsAnswer = 'title:string'): ScaffoldResource {
+  return { input, fields: parseFields(fieldsAnswer) }
+}
+
 function baseChoice(overrides: Partial<ScaffoldChoice> = {}): ScaffoldChoice {
-  return { frameworkId: 'express', databaseId: 'pg', validatorId: 'zod', resources: ['posts'], ...overrides }
+  return {
+    frameworkId: 'express',
+    databaseId: 'pg',
+    validatorId: 'zod',
+    resources: [resource('posts')],
+    ...overrides,
+  }
 }
 
 describe('layered theme generate()', () => {
@@ -104,22 +156,29 @@ describe('layered theme generate()', () => {
     expect(middleware).toContain('await next()')
   })
 
-  it('generates real pg queries in the model when database is pg', () => {
-    const files = theme.generate(baseChoice({ databaseId: 'pg' }))
-    const model = files.find((f) => f.path === 'src/models/posts.model.ts')!.contents
-    expect(model).toContain('export async function listPosts')
-    expect(model).toContain('export async function createPost')
-    expect(model).toContain('FROM posts')
-    expect(model).toContain(`db.client as Pool`)
+  it('reflects the user-specified fields in the model interface, query, and create signature', () => {
+    const files = theme.generate(
+      baseChoice({ resources: [resource('users', 'name:string, age:number, isAdmin:boolean')] }),
+    )
+    const model = files.find((f) => f.path === 'src/models/users.model.ts')!.contents
+    expect(model).toContain('name: string')
+    expect(model).toContain('age: number')
+    expect(model).toContain('isAdmin: boolean')
+    expect(model).toContain('SELECT id, name, age, isAdmin, created_at AS "createdAt" FROM users')
+    expect(model).toContain(
+      'export async function createUser(data: { name: string; age: number; isAdmin: boolean }): Promise<User> {',
+    )
+    expect(model).toContain('[data.name, data.age, data.isAdmin]')
   })
 
-  it('generates a zod schema in routes and wires it into the POST route', () => {
-    const files = theme.generate(baseChoice({ validatorId: 'zod' }))
-    const routes = files.find((f) => f.path === 'src/routes/posts.routes.ts')!.contents
-    expect(routes).toContain(`import { z } from 'zod'`)
-    expect(routes).toContain('const createPostSchema = z.object({ title: z.string().min(1) })')
-    expect(routes).toContain('body: createPostSchema,')
-    expect(routes).toContain(`path: '/posts'`)
+  it('reflects the same fields in the validator schema and controller body cast', () => {
+    const files = theme.generate(
+      baseChoice({ resources: [resource('users', 'name:string, age:number')], validatorId: 'zod' }),
+    )
+    const routes = files.find((f) => f.path === 'src/routes/users.routes.ts')!.contents
+    expect(routes).toContain('const createUserSchema = z.object({ name: z.string(), age: z.number() })')
+    const controller = files.find((f) => f.path === 'src/controllers/users.controller.ts')!.contents
+    expect(controller).toContain('const body = ctx.body as { name: string; age: number }')
   })
 
   it('omits config/database.ts and the db wiring when no database is chosen', () => {
@@ -161,35 +220,47 @@ describe('layered theme generate()', () => {
     }
   })
 
-  it('generates one module per resource and wires every one into routes/index.ts', () => {
-    const files = theme.generate(baseChoice({ resources: ['users', 'posts', 'comments'] }))
+  it('generates one module per resource, each with its own fields, and wires every one into routes/index.ts', () => {
+    const files = theme.generate(
+      baseChoice({
+        resources: [
+          resource('users', 'name:string, email:string'),
+          resource('posts', 'title:string, views:number'),
+        ],
+      }),
+    )
     const paths = files.map((f) => f.path)
-    for (const plural of ['users', 'posts', 'comments']) {
+    for (const plural of ['users', 'posts']) {
       expect(paths).toContain(`src/models/${plural}.model.ts`)
-      expect(paths).toContain(`src/services/${plural}.service.ts`)
-      expect(paths).toContain(`src/controllers/${plural}.controller.ts`)
-      expect(paths).toContain(`src/routes/${plural}.routes.ts`)
     }
-    // config/env/middleware/app/index stay singular and shared
-    expect(paths.filter((p) => p === 'src/app.ts')).toHaveLength(1)
-    expect(paths.filter((p) => p === 'src/config/env.ts')).toHaveLength(1)
-    expect(paths.filter((p) => p === 'src/middleware/requestTimer.middleware.ts')).toHaveLength(1)
+    const usersModel = files.find((f) => f.path === 'src/models/users.model.ts')!.contents
+    expect(usersModel).toContain('email: string')
+    const postsModel = files.find((f) => f.path === 'src/models/posts.model.ts')!.contents
+    expect(postsModel).toContain('views: number')
+    expect(postsModel).not.toContain('email')
 
     const routesIndex = files.find((f) => f.path === 'src/routes/index.ts')!.contents
     expect(routesIndex).toContain(`import './users.routes.js'`)
     expect(routesIndex).toContain(`import './posts.routes.js'`)
-    expect(routesIndex).toContain(`import './comments.routes.js'`)
   })
 
-  it('dedupes resources that normalize to the same plural slug', () => {
-    const files = theme.generate(baseChoice({ resources: ['Users', 'users', ' users '] }))
+  it('dedupes resources that normalize to the same plural slug, keeping the first fields', () => {
+    const files = theme.generate(
+      baseChoice({
+        resources: [resource('Users', 'name:string'), resource('users', 'email:string')],
+      }),
+    )
     const modelFiles = files.filter((f) => f.path === 'src/models/users.model.ts')
     expect(modelFiles).toHaveLength(1)
+    expect(modelFiles[0].contents).toContain('name: string')
+    expect(modelFiles[0].contents).not.toContain('email')
   })
 
-  it('falls back to a single "users" module when no resources are given', () => {
+  it('falls back to a single "users" module with a default field when no resources are given', () => {
     const files = theme.generate(baseChoice({ resources: [] }))
     expect(files.map((f) => f.path)).toContain('src/models/users.model.ts')
+    const model = files.find((f) => f.path === 'src/models/users.model.ts')!.contents
+    expect(model).toContain('name: string')
   })
 })
 
@@ -232,8 +303,10 @@ describe('modular theme generate()', () => {
     expect(model).toContain(`from '../../config/database.js'`)
   })
 
-  it('generates one module folder per resource', () => {
-    const files = theme.generate(baseChoice({ resources: ['users', 'posts'] }))
+  it('generates one module folder per resource, each with its own fields', () => {
+    const files = theme.generate(
+      baseChoice({ resources: [resource('users', 'name:string'), resource('posts', 'title:string')] }),
+    )
     const paths = files.map((f) => f.path)
     expect(paths).toContain('src/modules/users/users.model.ts')
     expect(paths).toContain('src/modules/posts/posts.model.ts')

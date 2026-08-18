@@ -1,5 +1,14 @@
 import { createPrompter, promptChoice, promptText, type Questioner } from '../prompt.js'
-import { findTheme, parseResourceList, PROJECT_THEMES, type ScaffoldChoice, type ScaffoldFile } from '../scaffold.js'
+import {
+  findTheme,
+  parseFields,
+  parseResourceList,
+  PROJECT_THEMES,
+  resourceNames,
+  type ScaffoldChoice,
+  type ScaffoldFile,
+  type ScaffoldResource,
+} from '../scaffold.js'
 import { writeScaffoldFiles, type WriteResult } from '../write-files.js'
 
 export interface ScaffoldWizardOptions {
@@ -21,7 +30,7 @@ export async function runScaffoldWizard(
 
   const rl = options.prompter ?? createPrompter()
   let themeId: string | null
-  let resourcesAnswer: string
+  const resources: ScaffoldResource[] = []
 
   try {
     themeId = await promptChoice(
@@ -32,11 +41,22 @@ export async function runScaffoldWizard(
     )
     if (!themeId) return 0
 
-    resourcesAnswer = await promptText(
+    const resourcesAnswer = await promptText(
       rl,
       'Name your resources — one module gets generated per name (comma-separated, plural, e.g. users, posts):',
       'users',
     )
+    const resourceInputs = parseResourceList(resourcesAnswer)
+
+    for (const input of resourceInputs.length > 0 ? resourceInputs : ['users']) {
+      const plural = resourceNames(input).plural
+      const fieldsAnswer = await promptText(
+        rl,
+        `Fields for ${plural} — name:type, comma-separated (types: string, number, boolean):`,
+        'name:string',
+      )
+      resources.push({ input, fields: parseFields(fieldsAnswer) })
+    }
   } finally {
     rl.close?.()
   }
@@ -44,12 +64,11 @@ export async function runScaffoldWizard(
   const theme = findTheme(themeId)
   if (!theme) return 0
 
-  const resources = parseResourceList(resourcesAnswer)
   const choice: ScaffoldChoice = {
     frameworkId: selections.framework?.[0] ?? 'http',
     databaseId: selections.database?.[0] ?? 'none',
     validatorId: selections.validation?.[0] ?? 'none',
-    resources: resources.length > 0 ? resources : ['users'],
+    resources,
   }
 
   const files = theme.generate(choice)
@@ -57,8 +76,9 @@ export async function runScaffoldWizard(
   const { written, skipped } = write(files, cwd)
 
   const moduleWord = choice.resources.length === 1 ? 'module' : 'modules'
+  const moduleNames = choice.resources.map((r) => r.input).join(', ')
   console.log(
-    `\nScaffolded ${written.length} file(s) under src/ (${choice.resources.length} ${moduleWord}: ${choice.resources.join(', ')}) using the "${theme.label.split(' (')[0]}" structure.`,
+    `\nScaffolded ${written.length} file(s) under src/ (${choice.resources.length} ${moduleWord}: ${moduleNames}) using the "${theme.label.split(' (')[0]}" structure.`,
   )
   if (skipped.length > 0) {
     console.log(`Left ${skipped.length} existing file(s) untouched: ${skipped.join(', ')}`)

@@ -3,12 +3,24 @@ export interface ScaffoldFile {
   contents: string
 }
 
+export type ScaffoldFieldType = 'string' | 'number' | 'boolean'
+
+export interface ScaffoldField {
+  name: string
+  type: ScaffoldFieldType
+}
+
+export interface ScaffoldResource {
+  /** Free-text resource name as typed by the user, e.g. "posts". */
+  input: string
+  fields: ScaffoldField[]
+}
+
 export interface ScaffoldChoice {
   frameworkId: string
   databaseId: string
   validatorId: string
-  /** Free-text resource names as typed by the user, e.g. ["users", "posts"] — one module gets generated per entry. */
-  resources: string[]
+  resources: ScaffoldResource[]
 }
 
 export interface ProjectTheme {
@@ -54,6 +66,33 @@ export function parseResourceList(input: string): string[] {
   return [...new Set(input.split(',').map((part) => part.trim()).filter(Boolean))]
 }
 
+const FIELD_TYPES: ScaffoldFieldType[] = ['string', 'number', 'boolean']
+
+function sanitizeFieldName(input: string): string {
+  const cleaned = input.trim().replace(/[^a-zA-Z0-9_]/g, '')
+  if (!cleaned) return ''
+  return /^[0-9]/.test(cleaned) ? `f${cleaned}` : cleaned
+}
+
+/** Parses a "name:type, name2:type2" answer into field definitions. Bare "name" (no ":type") defaults to string. */
+export function parseFields(input: string): ScaffoldField[] {
+  const fields: ScaffoldField[] = []
+  const seen = new Set<string>()
+
+  for (const part of input.split(',')) {
+    const trimmed = part.trim()
+    if (!trimmed) continue
+    const [rawName, rawType] = trimmed.split(':').map((s) => s.trim())
+    const name = sanitizeFieldName(rawName ?? '')
+    if (!name || seen.has(name)) continue
+    const type = FIELD_TYPES.includes(rawType as ScaffoldFieldType) ? (rawType as ScaffoldFieldType) : 'string'
+    seen.add(name)
+    fields.push({ name, type })
+  }
+
+  return fields.length > 0 ? fields : [{ name: 'name', type: 'string' }]
+}
+
 export function resourceNames(input: string): ResourceNames {
   const plural = slugify(input)
   const singular = singularize(plural)
@@ -67,6 +106,14 @@ export function resourceNames(input: string): ResourceNames {
 
 function lines(parts: Array<string | false | null | undefined>): string {
   return `${parts.filter((part): part is string => part !== false && part != null).join('\n')}\n`
+}
+
+function tsType(type: ScaffoldFieldType): string {
+  return type
+}
+
+function fieldsTypeLiteral(fields: ScaffoldField[]): string {
+  return `{ ${fields.map((f) => `${f.name}: ${tsType(f.type)}`).join('; ')} }`
 }
 
 interface FrameworkTemplate {
@@ -91,7 +138,8 @@ interface ValidatorTemplate {
   importLine: string
   factoryExpr: string
   schemaImportLine: string
-  schemaDecl: (constName: string) => string
+  fieldExpr: (type: ScaffoldFieldType) => string
+  objectExpr: (fieldsSrc: string) => string
 }
 
 const VALIDATOR_TEMPLATES: Record<string, ValidatorTemplate> = {
@@ -99,36 +147,55 @@ const VALIDATOR_TEMPLATES: Record<string, ValidatorTemplate> = {
     importLine: `import { zod } from '@api-kickstart/api-kickstart/zod'`,
     factoryExpr: 'zod()',
     schemaImportLine: `import { z } from 'zod'`,
-    schemaDecl: (constName) => `const ${constName} = z.object({ title: z.string().min(1) })`,
+    fieldExpr: (type) => ({ string: 'z.string()', number: 'z.number()', boolean: 'z.boolean()' })[type],
+    objectExpr: (fieldsSrc) => `z.object({ ${fieldsSrc} })`,
   },
   joi: {
     importLine: `import { joi } from '@api-kickstart/api-kickstart/joi'`,
     factoryExpr: 'joi()',
     schemaImportLine: `import Joi from 'joi'`,
-    schemaDecl: (constName) => `const ${constName} = Joi.object({ title: Joi.string().min(1).required() })`,
+    fieldExpr: (type) =>
+      ({ string: 'Joi.string().required()', number: 'Joi.number().required()', boolean: 'Joi.boolean().required()' })[
+        type
+      ],
+    objectExpr: (fieldsSrc) => `Joi.object({ ${fieldsSrc} })`,
   },
   yup: {
     importLine: `import { yup } from '@api-kickstart/api-kickstart/yup'`,
     factoryExpr: 'yup()',
     schemaImportLine: `import * as yup from 'yup'`,
-    schemaDecl: (constName) => `const ${constName} = yup.object({ title: yup.string().min(1).required() })`,
+    fieldExpr: (type) =>
+      ({
+        string: 'yup.string().required()',
+        number: 'yup.number().required()',
+        boolean: 'yup.boolean().required()',
+      })[type],
+    objectExpr: (fieldsSrc) => `yup.object({ ${fieldsSrc} })`,
   },
   valibot: {
     importLine: `import { valibot } from '@api-kickstart/api-kickstart/valibot'`,
     factoryExpr: 'valibot()',
     schemaImportLine: `import * as v from 'valibot'`,
-    schemaDecl: (constName) => `const ${constName} = v.object({ title: v.pipe(v.string(), v.minLength(1)) })`,
+    fieldExpr: (type) => ({ string: 'v.string()', number: 'v.number()', boolean: 'v.boolean()' })[type],
+    objectExpr: (fieldsSrc) => `v.object({ ${fieldsSrc} })`,
   },
   typebox: {
     importLine: `import { typebox } from '@api-kickstart/api-kickstart/typebox'`,
     factoryExpr: 'typebox()',
     schemaImportLine: `import { Type } from '@sinclair/typebox'`,
-    schemaDecl: (constName) => `const ${constName} = Type.Object({ title: Type.String({ minLength: 1 }) })`,
+    fieldExpr: (type) =>
+      ({ string: 'Type.String()', number: 'Type.Number()', boolean: 'Type.Boolean()' })[type],
+    objectExpr: (fieldsSrc) => `Type.Object({ ${fieldsSrc} })`,
   },
 }
 
 function validatorTemplate(id: string): ValidatorTemplate | null {
   return VALIDATOR_TEMPLATES[id] ?? null
+}
+
+function validatorSchemaExpr(validator: ValidatorTemplate, fields: ScaffoldField[]): string {
+  const fieldsSrc = fields.map((f) => `${f.name}: ${validator.fieldExpr(f.type)}`).join(', ')
+  return validator.objectExpr(fieldsSrc)
 }
 
 function databaseConfigFile(id: string): string | null {
@@ -227,60 +294,88 @@ function databaseConfigFile(id: string): string | null {
   }
 }
 
-function dbModelBody(id: string, names: ResourceNames, dbImportPath: string): string {
+function drizzleColumnExpr(field: ScaffoldField): string {
+  switch (field.type) {
+    case 'number':
+      return `integer('${field.name}').notNull()`
+    case 'boolean':
+      return `boolean('${field.name}').notNull()`
+    default:
+      return `text('${field.name}').notNull()`
+  }
+}
+
+function dbModelBody(id: string, names: ResourceNames, dbImportPath: string, fields: ScaffoldField[]): string {
   const { plural, Pascal, PascalPlural } = names
+  const fieldNames = fields.map((f) => f.name)
+  const dataType = fieldsTypeLiteral(fields)
+  const interfaceFields = fields.map((f) => `  ${f.name}: ${tsType(f.type)}`)
 
   switch (id) {
     case 'pg':
+    case 'typeorm': {
+      const placeholders = fieldNames.map((_, i) => `$${i + 1}`).join(', ')
+      const columns = fieldNames.join(', ')
+      const returning = `id, ${columns}, created_at AS "createdAt"`
+      const values = fieldNames.map((n) => `data.${n}`).join(', ')
+      const clientAccessor = id === 'pg' ? `db.client as Pool` : `db.client as DataSource`
+      const clientImport = id === 'pg' ? `import type { Pool } from 'pg'` : `import type { DataSource } from 'typeorm'`
+      const runner = id === 'pg' ? 'pool()' : 'dataSource()'
+      const listStmt =
+        id === 'pg'
+          ? `const { rows } = await pool().query(\n    'SELECT id, ${columns}, created_at AS "createdAt" FROM ${plural} ORDER BY created_at DESC',\n  )\n  return rows`
+          : `return dataSource().query('SELECT id, ${columns}, created_at AS "createdAt" FROM ${plural} ORDER BY created_at DESC')`
+      const createStmt =
+        id === 'pg'
+          ? `const { rows } = await pool().query(\n    'INSERT INTO ${plural} (${columns}) VALUES (${placeholders}) RETURNING ${returning}',\n    [${values}],\n  )\n  return rows[0]`
+          : `const rows = await dataSource().query(\n    'INSERT INTO ${plural} (${columns}) VALUES (${placeholders}) RETURNING ${returning}',\n    [${values}],\n  )\n  return rows[0]`
+
       return lines([
-        `import type { Pool } from 'pg'`,
+        clientImport,
         `import { db } from '${dbImportPath}'`,
         ``,
         `export interface ${Pascal} {`,
         `  id: string`,
-        `  title: string`,
+        ...interfaceFields,
         `  createdAt: string`,
         `}`,
         ``,
-        `const pool = () => db.client as Pool`,
+        `const ${runner.replace('()', '')} = () => ${clientAccessor}`,
         ``,
         `export async function list${PascalPlural}(): Promise<${Pascal}[]> {`,
-        `  const { rows } = await pool().query(`,
-        `    'SELECT id, title, created_at AS "createdAt" FROM ${plural} ORDER BY created_at DESC',`,
-        `  )`,
-        `  return rows`,
+        `  ${listStmt}`,
         `}`,
         ``,
-        `export async function create${Pascal}(title: string): Promise<${Pascal}> {`,
-        `  const { rows } = await pool().query(`,
-        `    'INSERT INTO ${plural} (title) VALUES ($1) RETURNING id, title, created_at AS "createdAt"',`,
-        `    [title],`,
-        `  )`,
-        `  return rows[0]`,
+        `export async function create${Pascal}(data: ${dataType}): Promise<${Pascal}> {`,
+        `  ${createStmt}`,
         `}`,
       ])
-    case 'knex':
+    }
+    case 'knex': {
+      const selectCols = ['id', ...fieldNames, 'created_at as createdAt'].map((c) => `'${c}'`).join(', ')
+      const returnCols = `['id', ${fieldNames.map((n) => `'${n}'`).join(', ')}, 'created_at as createdAt']`
       return lines([
         `import type { Knex } from 'knex'`,
         `import { db } from '${dbImportPath}'`,
         ``,
         `export interface ${Pascal} {`,
         `  id: number`,
-        `  title: string`,
+        ...interfaceFields,
         `  createdAt: string`,
         `}`,
         ``,
         `const table = () => (db.client as Knex)('${plural}')`,
         ``,
         `export async function list${PascalPlural}(): Promise<${Pascal}[]> {`,
-        `  return table().select('id', 'title', 'created_at as createdAt').orderBy('created_at', 'desc')`,
+        `  return table().select(${selectCols}).orderBy('created_at', 'desc')`,
         `}`,
         ``,
-        `export async function create${Pascal}(title: string): Promise<${Pascal}> {`,
-        `  const [row] = await table().insert({ title }).returning(['id', 'title', 'created_at as createdAt'])`,
+        `export async function create${Pascal}(data: ${dataType}): Promise<${Pascal}> {`,
+        `  const [row] = await table().insert(data).returning(${returnCols})`,
         `  return row`,
         `}`,
       ])
+    }
     case 'mongodb':
       return lines([
         `import type { Db } from 'mongodb'`,
@@ -288,7 +383,7 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string): st
         ``,
         `export interface ${Pascal} {`,
         `  _id: unknown`,
-        `  title: string`,
+        ...interfaceFields,
         `  createdAt: Date`,
         `}`,
         ``,
@@ -299,19 +394,21 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string): st
         `  return docs as unknown as ${Pascal}[]`,
         `}`,
         ``,
-        `export async function create${Pascal}(title: string): Promise<${Pascal}> {`,
-        `  const doc = { title, createdAt: new Date() }`,
+        `export async function create${Pascal}(data: ${dataType}): Promise<${Pascal}> {`,
+        `  const doc = { ...data, createdAt: new Date() }`,
         `  const { insertedId } = await collection().insertOne(doc)`,
         `  return { _id: insertedId, ...doc }`,
         `}`,
       ])
-    case 'mongoose':
+    case 'mongoose': {
+      const mongooseTypeOf: Record<ScaffoldFieldType, string> = { string: 'String', number: 'Number', boolean: 'Boolean' }
+      const schemaFields = fields.map((f) => `  ${f.name}: { type: ${mongooseTypeOf[f.type]}, required: true },`)
       return lines([
         `import { Schema, type Connection } from 'mongoose'`,
         `import { db } from '${dbImportPath}'`,
         ``,
         `const ${names.singular}Schema = new Schema({`,
-        `  title: { type: String, required: true },`,
+        ...schemaFields,
         `  createdAt: { type: Date, default: Date.now },`,
         `})`,
         ``,
@@ -321,43 +418,22 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string): st
         `  return ${Pascal}Model.find().sort({ createdAt: -1 })`,
         `}`,
         ``,
-        `export async function create${Pascal}(title: string) {`,
-        `  return ${Pascal}Model.create({ title })`,
+        `export async function create${Pascal}(data: ${dataType}) {`,
+        `  return ${Pascal}Model.create(data)`,
         `}`,
       ])
-    case 'typeorm':
-      return lines([
-        `import type { DataSource } from 'typeorm'`,
-        `import { db } from '${dbImportPath}'`,
-        ``,
-        `export interface ${Pascal} {`,
-        `  id: number`,
-        `  title: string`,
-        `  createdAt: string`,
-        `}`,
-        ``,
-        `const dataSource = () => db.client as DataSource`,
-        ``,
-        `export async function list${PascalPlural}(): Promise<${Pascal}[]> {`,
-        `  return dataSource().query('SELECT id, title, created_at AS "createdAt" FROM ${plural} ORDER BY created_at DESC')`,
-        `}`,
-        ``,
-        `export async function create${Pascal}(title: string): Promise<${Pascal}> {`,
-        `  const rows = await dataSource().query(`,
-        `    'INSERT INTO ${plural} (title) VALUES ($1) RETURNING id, title, created_at AS "createdAt"',`,
-        `    [title],`,
-        `  )`,
-        `  return rows[0]`,
-        `}`,
-      ])
-    case 'sequelize':
+    }
+    case 'sequelize': {
+      const columns = fieldNames.join(', ')
+      const namedPlaceholders = fieldNames.map((n) => `:${n}`).join(', ')
+      const returning = `id, ${columns}, created_at AS "createdAt"`
       return lines([
         `import { QueryTypes, type Sequelize } from 'sequelize'`,
         `import { db } from '${dbImportPath}'`,
         ``,
         `export interface ${Pascal} {`,
         `  id: number`,
-        `  title: string`,
+        ...interfaceFields,
         `  createdAt: string`,
         `}`,
         ``,
@@ -365,29 +441,38 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string): st
         ``,
         `export async function list${PascalPlural}(): Promise<${Pascal}[]> {`,
         `  return client().query<${Pascal}>(`,
-        `    'SELECT id, title, created_at AS "createdAt" FROM ${plural} ORDER BY created_at DESC',`,
+        `    'SELECT id, ${columns}, created_at AS "createdAt" FROM ${plural} ORDER BY created_at DESC',`,
         `    { type: QueryTypes.SELECT },`,
         `  )`,
         `}`,
         ``,
-        `export async function create${Pascal}(title: string): Promise<${Pascal}> {`,
+        `export async function create${Pascal}(data: ${dataType}): Promise<${Pascal}> {`,
         `  const rows = await client().query<${Pascal}>(`,
-        `    'INSERT INTO ${plural} (title) VALUES (:title) RETURNING id, title, created_at AS "createdAt"',`,
-        `    { replacements: { title }, type: QueryTypes.SELECT },`,
+        `    'INSERT INTO ${plural} (${columns}) VALUES (${namedPlaceholders}) RETURNING ${returning}',`,
+        `    { replacements: data, type: QueryTypes.SELECT },`,
         `  )`,
         `  return rows[0]`,
         `}`,
       ])
-    case 'drizzle':
+    }
+    case 'drizzle': {
+      const usesInteger = fields.some((f) => f.type === 'number')
+      const usesBoolean = fields.some((f) => f.type === 'boolean')
+      const usesText = fields.some((f) => f.type === 'string') || fields.length === 0
+      const coreImports = ['pgTable', 'serial', 'timestamp']
+      if (usesText) coreImports.push('text')
+      if (usesInteger) coreImports.push('integer')
+      if (usesBoolean) coreImports.push('boolean')
+      const tableFields = fields.map((f) => `  ${f.name}: ${drizzleColumnExpr(f)},`)
       return lines([
         `import { desc } from 'drizzle-orm'`,
-        `import { pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core'`,
+        `import { ${coreImports.join(', ')} } from 'drizzle-orm/pg-core'`,
         `import type { NodePgDatabase } from 'drizzle-orm/node-postgres'`,
         `import { db } from '${dbImportPath}'`,
         ``,
         `export const ${plural}Table = pgTable('${plural}', {`,
         `  id: serial('id').primaryKey(),`,
-        `  title: text('title').notNull(),`,
+        ...tableFields,
         `  createdAt: timestamp('created_at').defaultNow(),`,
         `})`,
         ``,
@@ -397,16 +482,17 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string): st
         `  return client().select().from(${plural}Table).orderBy(desc(${plural}Table.createdAt))`,
         `}`,
         ``,
-        `export async function create${Pascal}(title: string) {`,
-        `  const [row] = await client().insert(${plural}Table).values({ title }).returning()`,
+        `export async function create${Pascal}(data: ${dataType}) {`,
+        `  const [row] = await client().insert(${plural}Table).values(data).returning()`,
         `  return row`,
         `}`,
       ])
+    }
     default:
       return lines([
         `export interface ${Pascal} {`,
         `  id: string`,
-        `  title: string`,
+        ...interfaceFields,
         `  createdAt: string`,
         `}`,
         ``,
@@ -417,9 +503,9 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string): st
         `  return [...store.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))`,
         `}`,
         ``,
-        `export async function create${Pascal}(title: string): Promise<${Pascal}> {`,
+        `export async function create${Pascal}(data: ${dataType}): Promise<${Pascal}> {`,
         `  seq += 1`,
-        `  const record: ${Pascal} = { id: String(seq), title, createdAt: new Date().toISOString() }`,
+        `  const record: ${Pascal} = { id: String(seq), ...data, createdAt: new Date().toISOString() }`,
         `  store.set(record.id, record)`,
         `  return record`,
         `}`,
@@ -427,8 +513,9 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string): st
   }
 }
 
-function serviceBody(names: ResourceNames, modelImportPath: string): string {
+function serviceBody(names: ResourceNames, modelImportPath: string, fields: ScaffoldField[]): string {
   const { Pascal, PascalPlural } = names
+  const dataType = fieldsTypeLiteral(fields)
   return lines([
     `import { create${Pascal}, list${PascalPlural} } from '${modelImportPath}'`,
     ``,
@@ -436,17 +523,15 @@ function serviceBody(names: ResourceNames, modelImportPath: string): string {
     `  return list${PascalPlural}()`,
     `}`,
     ``,
-    `export async function add${Pascal}(title: string) {`,
-    `  if (!title || !title.trim()) {`,
-    `    throw new Error('title is required')`,
-    `  }`,
-    `  return create${Pascal}(title.trim())`,
+    `export async function add${Pascal}(data: ${dataType}) {`,
+    `  return create${Pascal}(data)`,
     `}`,
   ])
 }
 
-function controllerBody(names: ResourceNames, serviceImportPath: string): string {
+function controllerBody(names: ResourceNames, serviceImportPath: string, fields: ScaffoldField[]): string {
   const { Pascal, PascalPlural } = names
+  const dataType = fieldsTypeLiteral(fields)
   return lines([
     `import type { Context } from '@api-kickstart/api-kickstart'`,
     `import { add${Pascal}, getAll${PascalPlural} } from '${serviceImportPath}'`,
@@ -456,8 +541,8 @@ function controllerBody(names: ResourceNames, serviceImportPath: string): string
     `}`,
     ``,
     `export async function create${Pascal}Handler(ctx: Context) {`,
-    `  const body = ctx.body as { title: string }`,
-    `  return add${Pascal}(body.title)`,
+    `  const body = ctx.body as ${dataType}`,
+    `  return add${Pascal}(body)`,
     `}`,
   ])
 }
@@ -467,6 +552,7 @@ function routesBody(
   validatorId: string,
   appImportPath: string,
   controllerImportPath: string,
+  fields: ScaffoldField[],
 ): string {
   const { plural, Pascal, PascalPlural } = names
   const validator = validatorTemplate(validatorId)
@@ -477,7 +563,7 @@ function routesBody(
     `import { app } from '${appImportPath}'`,
     `import { create${Pascal}Handler, list${PascalPlural}Handler } from '${controllerImportPath}'`,
     ``,
-    validator && validator.schemaDecl(schemaConst),
+    validator && `const ${schemaConst} = ${validatorSchemaExpr(validator, fields)}`,
     validator && ``,
     `app.route({`,
     `  method: 'GET',`,
@@ -550,18 +636,26 @@ function indexFile(routesBarrelPath: string): string {
   ])
 }
 
-function uniqueResourceNames(resources: string[]): ResourceNames[] {
-  const byPlural = new Map<string, ResourceNames>()
-  for (const resource of resources.length > 0 ? resources : ['users']) {
-    const names = resourceNames(resource)
-    byPlural.set(names.plural, names)
+interface ResolvedResource {
+  names: ResourceNames
+  fields: ScaffoldField[]
+}
+
+function uniqueResources(resources: ScaffoldResource[]): ResolvedResource[] {
+  const byPlural = new Map<string, ResolvedResource>()
+  const list = resources.length > 0 ? resources : [{ input: 'users', fields: parseFields('') }]
+  for (const resource of list) {
+    const names = resourceNames(resource.input)
+    if (!byPlural.has(names.plural)) {
+      byPlural.set(names.plural, { names, fields: resource.fields })
+    }
   }
   return [...byPlural.values()]
 }
 
 function generateLayered(choice: ScaffoldChoice): ScaffoldFile[] {
   const files: ScaffoldFile[] = []
-  const resources = uniqueResourceNames(choice.resources)
+  const resources = uniqueResources(choice.resources)
 
   files.push({ path: 'src/config/env.ts', contents: envFile() })
 
@@ -572,28 +666,34 @@ function generateLayered(choice: ScaffoldChoice): ScaffoldFile[] {
 
   files.push({ path: 'src/middleware/requestTimer.middleware.ts', contents: requestTimerMiddlewareFile() })
 
-  for (const names of resources) {
+  for (const { names, fields } of resources) {
     files.push({
       path: `src/models/${names.plural}.model.ts`,
-      contents: dbModelBody(choice.databaseId, names, '../config/database.js'),
+      contents: dbModelBody(choice.databaseId, names, '../config/database.js', fields),
     })
     files.push({
       path: `src/services/${names.plural}.service.ts`,
-      contents: serviceBody(names, `../models/${names.plural}.model.js`),
+      contents: serviceBody(names, `../models/${names.plural}.model.js`, fields),
     })
     files.push({
       path: `src/controllers/${names.plural}.controller.ts`,
-      contents: controllerBody(names, `../services/${names.plural}.service.js`),
+      contents: controllerBody(names, `../services/${names.plural}.service.js`, fields),
     })
     files.push({
       path: `src/routes/${names.plural}.routes.ts`,
-      contents: routesBody(names, choice.validatorId, '../app.js', `../controllers/${names.plural}.controller.js`),
+      contents: routesBody(
+        names,
+        choice.validatorId,
+        '../app.js',
+        `../controllers/${names.plural}.controller.js`,
+        fields,
+      ),
     })
   }
 
   files.push({
     path: 'src/routes/index.ts',
-    contents: lines(resources.map((names) => `import './${names.plural}.routes.js'`)),
+    contents: lines(resources.map(({ names }) => `import './${names.plural}.routes.js'`)),
   })
   files.push({ path: 'src/app.ts', contents: appFile(choice) })
   files.push({ path: 'src/index.ts', contents: indexFile('./routes/index.js') })
@@ -603,7 +703,7 @@ function generateLayered(choice: ScaffoldChoice): ScaffoldFile[] {
 
 function generateModular(choice: ScaffoldChoice): ScaffoldFile[] {
   const files: ScaffoldFile[] = []
-  const resources = uniqueResourceNames(choice.resources)
+  const resources = uniqueResources(choice.resources)
 
   files.push({ path: 'src/config/env.ts', contents: envFile() })
 
@@ -614,29 +714,29 @@ function generateModular(choice: ScaffoldChoice): ScaffoldFile[] {
 
   files.push({ path: 'src/middleware/requestTimer.middleware.ts', contents: requestTimerMiddlewareFile() })
 
-  for (const names of resources) {
+  for (const { names, fields } of resources) {
     const moduleDir = `src/modules/${names.plural}`
     files.push({
       path: `${moduleDir}/${names.plural}.model.ts`,
-      contents: dbModelBody(choice.databaseId, names, '../../config/database.js'),
+      contents: dbModelBody(choice.databaseId, names, '../../config/database.js', fields),
     })
     files.push({
       path: `${moduleDir}/${names.plural}.service.ts`,
-      contents: serviceBody(names, `./${names.plural}.model.js`),
+      contents: serviceBody(names, `./${names.plural}.model.js`, fields),
     })
     files.push({
       path: `${moduleDir}/${names.plural}.controller.ts`,
-      contents: controllerBody(names, `./${names.plural}.service.js`),
+      contents: controllerBody(names, `./${names.plural}.service.js`, fields),
     })
     files.push({
       path: `${moduleDir}/${names.plural}.routes.ts`,
-      contents: routesBody(names, choice.validatorId, '../../app.js', `./${names.plural}.controller.js`),
+      contents: routesBody(names, choice.validatorId, '../../app.js', `./${names.plural}.controller.js`, fields),
     })
   }
 
   files.push({
     path: 'src/modules/index.ts',
-    contents: lines(resources.map((names) => `import './${names.plural}/${names.plural}.routes.js'`)),
+    contents: lines(resources.map(({ names }) => `import './${names.plural}/${names.plural}.routes.js'`)),
   })
   files.push({ path: 'src/app.ts', contents: appFile(choice) })
   files.push({ path: 'src/index.ts', contents: indexFile('./modules/index.js') })
