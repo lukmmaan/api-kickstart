@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseSelection, promptCategory, type Questioner } from './prompt.js'
+import { parseSelection, promptCategory, promptChoice, promptText, type Questioner } from './prompt.js'
 import { findCategory } from './stack.js'
 
 describe('parseSelection', () => {
@@ -58,5 +58,49 @@ describe('promptCategory', () => {
     const output = logs.join('\n')
     expect(output).toContain(category.question)
     expect(output).toContain('pino')
+  })
+})
+
+describe('promptChoice', () => {
+  const choices = [
+    { id: 'layered', label: 'Layered' },
+    { id: 'modular', label: 'Modular' },
+  ]
+
+  it('maps the picked number back to a choice id', async () => {
+    const id = await promptChoice(fakeQuestioner('2'), 'Structure', 'Pick one', choices, () => {})
+    expect(id).toBe('modular')
+  })
+
+  it('returns null when the user presses enter with no input', async () => {
+    const id = await promptChoice(fakeQuestioner(''), 'Structure', 'Pick one', choices, () => {})
+    expect(id).toBeNull()
+  })
+
+  it('returns null for an out-of-range pick', async () => {
+    const id = await promptChoice(fakeQuestioner('9'), 'Structure', 'Pick one', choices, () => {})
+    expect(id).toBeNull()
+  })
+
+  it('prints the title, question, and every choice label', async () => {
+    const logs: string[] = []
+    await promptChoice(fakeQuestioner(''), 'Structure', 'Pick one', choices, (line) => logs.push(line))
+    const output = logs.join('\n')
+    expect(output).toContain('Structure')
+    expect(output).toContain('Pick one')
+    expect(output).toContain('Layered')
+    expect(output).toContain('Modular')
+  })
+})
+
+describe('promptText', () => {
+  it('returns the trimmed answer when one is given', async () => {
+    const value = await promptText(fakeQuestioner('  posts  '), 'Resource name?', 'items', () => {})
+    expect(value).toBe('posts')
+  })
+
+  it('falls back to the default value when the answer is blank', async () => {
+    const value = await promptText(fakeQuestioner(''), 'Resource name?', 'items', () => {})
+    expect(value).toBe('items')
   })
 })

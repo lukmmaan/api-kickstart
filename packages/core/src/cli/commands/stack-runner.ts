@@ -9,6 +9,8 @@ export interface StackWizardOptions {
   install?: (packages: StackPackage[], cwd: string) => boolean
   /** Injectable for tests — defaults to process.stdin.isTTY. */
   isInteractive?: boolean
+  /** Called with the choiceIds picked in each visited category, keyed by category id, before install runs. */
+  onSelections?: (selections: Record<string, string[]>) => void
 }
 
 export async function runStackWizard(
@@ -24,16 +26,19 @@ export async function runStackWizard(
 
   const rl = options.prompter ?? createPrompter()
   let packages: StackPackage[] = []
+  const selections: Record<string, string[]> = {}
 
   try {
     for (const category of categories) {
       const choiceIds = await promptCategory(rl, category)
+      selections[category.id] = choiceIds
       packages = packages.concat(resolvePackages(category, choiceIds))
     }
   } finally {
     rl.close?.()
   }
 
+  options.onSelections?.(selections)
   packages = dedupePackages(packages)
 
   if (packages.length === 0) {

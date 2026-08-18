@@ -157,7 +157,19 @@ Validation: Which validation library do you want?
 Enter a number, or press enter to skip: 1
 
 Installing with npm: express@^4.19.0 || ^5.0.0, pg@^8.11.0, zod@^3.23.0, zod-to-json-schema@^3.23.5
+
+Project structure: Scaffold a folder structure now (controllers, routes, services, models, config)?
+  1) Layered (config/, models/, services/, controllers/, routes/ — grouped by type)
+  2) Modular by feature (modules/<resource>/ — model, service, controller, routes together)
+Enter a number, or press enter to skip: 1
+
+Name your first resource (plural, e.g. posts, users):
+[items]: posts
+
+Scaffolded 9 file(s) under src/ using the "Layered" structure.
 ```
+
+Once the stack is installed, `init` asks one more thing: whether to scaffold a starting folder structure — `config/`, `models/`, `services/`, `controllers/`, `routes/` (or the same four grouped per-feature under `modules/<resource>/` instead) — wired up for the framework, database, and validator you just picked, with one real CRUD resource (list + create) already working end to end. Press enter to skip it if you'd rather lay out your own files. It never overwrites anything that already exists in `src/`.
 
 Every adapter you didn't pick is still fully implemented and ready — you can always `import` its subpath later, you just need the underlying library installed first. Picked wrong, or need another one mid-project (e.g. you're adding Kafka six months in)? Run it again any time:
 
@@ -2361,7 +2373,7 @@ npx api-kickstart <command> --config ./path/to/config.mjs
 
 | Command | What it does |
 |---|---|
-| `init` | interactively picks a framework/database/broker(s)/validator/storage/logger and installs exactly those packages — see [Install](#install) |
+| `init` | interactively picks a framework/database/broker(s)/validator/storage/logger and installs exactly those packages, then optionally scaffolds `config/`/`models/`/`services/`/`controllers/`/`routes/` (or `modules/<resource>/`) wired up for what you picked — see [Install](#install) |
 | `add [category]` | the same wizard, for adding more later; an optional category (`framework`, `database`, `broker`, `validation`, `storage`, `logging`) skips straight to it |
 | `doctor` | runs the [production checklist](#production-checklist) against your `App`, exits `1` if any check fails |
 | `env:example` | writes a `.env.example` derived from `envSchema` exported by your config file |
