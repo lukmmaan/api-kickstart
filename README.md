@@ -163,6 +163,11 @@ Project structure: Scaffold a folder structure now (controllers, routes, service
   2) Modular by feature (modules/<resource>/ — model, service, controller, routes together)
 Enter a number, or press enter to skip: 1
 
+Language: Generate TypeScript or JavaScript?
+  1) TypeScript
+  2) JavaScript
+Enter a number, or press enter to skip: 1
+
 Name your resources — one module gets generated per name (comma-separated, plural, e.g. users, posts):
 [users]: users, posts
 
@@ -188,10 +193,12 @@ Internationalization: Generate an i18n setup too (in-memory dictionary + locale-
   2) No
 Enter a number, or press enter to skip: 1
 
-Scaffolded 17 file(s) under src/ (2 modules: users, posts) using the "Layered" structure.
+Scaffolded 19 file(s) under src/ (2 modules: users, posts) using the "Layered" structure.
 ```
 
-Once the stack is installed, `init` asks whether to scaffold a starting folder structure — `config/`, `models/`, `services/`, `controllers/`, `routes/`, `middleware/` (or the model/service/controller/routes four grouped per-feature under `modules/<resource>/` instead) — wired up for the framework, database, and validator you just picked. Name one resource or several, comma-separated (`users, posts, comments`), then **for each one** say what fields it actually has (`name:string, email:string, age:number, isActive:boolean`) — it's not just folders and filenames that get generated, the file *contents* do too: the TS interface, the SQL/ORM query, the validator schema, and the controller's body cast all use those exact fields, per resource. Leave a fields answer blank and that resource gets a single generic `name: string` field instead.
+Once the stack is installed, `init` asks whether to scaffold a starting folder structure — `config/`, `models/`, `services/`, `controllers/`, `routes/`, `middleware/` (or the model/service/controller/routes four grouped per-feature under `modules/<resource>/` instead) — wired up for the framework, database, and validator you just picked. Then **TypeScript or JavaScript**: pick JavaScript and every file lands as plain `.js`, with every `import type`, interface, and type annotation stripped — not just the extension, the actual file contents change too. Pick TypeScript (the default) and each resource also gets a real `types/` folder — `src/types/users.types.ts`, `src/types/posts.types.ts` — holding the hand-written interface for that resource, imported by its model instead of declared inline (for Modular, the type file sits next to that resource's other files inside `modules/<resource>/` instead of a shared top-level folder, matching the rest of that theme).
+
+Name one resource or several, comma-separated (`users, posts, comments`), then **for each one** say what fields it actually has (`name:string, email:string, age:number, isActive:boolean`) — it's not just folders and filenames that get generated, the file *contents* do too: the interface, the SQL/ORM query, the validator schema, and the controller's body cast all use those exact fields, per resource. Leave a fields answer blank and that resource gets a single generic `name: string` field instead.
 
 Three more questions round it out, each independently skippable:
 
@@ -213,6 +220,9 @@ src/
 │   └── i18n.ts
 ├── middleware/
 │   └── requestTimer.middleware.ts
+├── types/
+│   ├── users.types.ts
+│   └── posts.types.ts
 ├── models/
 │   ├── users.model.ts
 │   └── posts.model.ts
@@ -230,12 +240,9 @@ src/
 └── index.ts
 ```
 
-`src/models/users.model.ts` — adapter-correct queries for whichever database you picked, built from the exact fields you typed for `users` (this is the `pg` version; MongoDB, Mongoose, Knex, TypeORM, Sequelize, and Drizzle each get their own idiomatic version with the same fields, and skipping the database step gets an in-memory `Map` instead):
+`src/types/users.types.ts` — the hand-written interface for `users`, in its own file because you're on TypeScript (skip this file entirely on JavaScript):
 
 ```ts
-import type { Pool } from 'pg'
-import { db } from '../config/database.js'
-
 export interface User {
   id: string
   name: string
@@ -244,6 +251,14 @@ export interface User {
   isActive: boolean
   createdAt: string
 }
+```
+
+`src/models/users.model.ts` — adapter-correct queries for whichever database you picked, built from the exact fields you typed for `users`, importing the interface from `types/` instead of declaring it inline (this is the `pg` version; MongoDB, Knex, TypeORM, and Sequelize each get their own types file too — Mongoose and Drizzle don't, since their ORM already infers real types, so a second hand-written one would just risk drifting out of sync; skipping the database step gets an in-memory `Map`, still with its own types file):
+
+```ts
+import type { Pool } from 'pg'
+import type { User } from '../types/users.types.js'
+import { db } from '../config/database.js'
 
 const pool = () => db.client as Pool
 
@@ -255,6 +270,29 @@ export async function listUsers(): Promise<User[]> {
 }
 
 export async function createUser(data: { name: string; email: string; age: number; isActive: boolean }): Promise<User> {
+  const { rows } = await pool().query(
+    'INSERT INTO users (name, email, age, isActive) VALUES ($1, $2, $3, $4) RETURNING id, name, email, age, isActive, created_at AS "createdAt"',
+    [data.name, data.email, data.age, data.isActive],
+  )
+  return rows[0]
+}
+```
+
+The same file in **JavaScript** — no `types/` file, no `import type`, no annotations, same query and same fields:
+
+```js
+import { db } from '../config/database.js'
+
+const pool = () => db.client
+
+export async function listUsers() {
+  const { rows } = await pool().query(
+    'SELECT id, name, email, age, isActive, created_at AS "createdAt" FROM users ORDER BY created_at DESC',
+  )
+  return rows
+}
+
+export async function createUser(data) {
   const { rows } = await pool().query(
     'INSERT INTO users (name, email, age, isActive) VALUES ($1, $2, $3, $4) RETURNING id, name, email, age, isActive, created_at AS "createdAt"',
     [data.name, data.email, data.age, data.isActive],
@@ -2582,7 +2620,7 @@ npx api-kickstart <command> --config ./path/to/config.mjs
 
 | Command | What it does |
 |---|---|
-| `init` | interactively picks a framework/database/broker(s)/validator/storage/logger and installs exactly those packages, then optionally scaffolds `config/`/`models/`/`services/`/`controllers/`/`routes/`/`middleware/` (or `modules/<resource>/`) — one module per resource you name, with the fields you give each one baked into its interface, query, schema, and handler, plus optional JWT/API-key auth, a roles & scope authorization example, and an i18n setup — wired up for what you picked — see [Install](#install) |
+| `init` | interactively picks a framework/database/broker(s)/validator/storage/logger and installs exactly those packages, then optionally scaffolds `config/`/`types/`/`models/`/`services/`/`controllers/`/`routes/`/`middleware/` (or `modules/<resource>/`) in TypeScript or JavaScript — one module per resource you name, with the fields you give each one baked into its interface, query, schema, and handler, plus optional JWT/API-key auth, a roles & scope authorization example, and an i18n setup — wired up for what you picked — see [Install](#install) |
 | `add [category]` | the same wizard, for adding more later; an optional category (`framework`, `database`, `broker`, `validation`, `storage`, `logging`) skips straight to it |
 | `doctor` | runs the [production checklist](#production-checklist) against your `App`, exits `1` if any check fails |
 | `env:example` | writes a `.env.example` derived from `envSchema` exported by your config file |

@@ -112,6 +112,7 @@ function baseChoice(overrides: Partial<ScaffoldChoice> = {}): ScaffoldChoice {
     authId: 'none',
     authorization: false,
     i18n: false,
+    language: 'ts',
     ...overrides,
   }
 }
@@ -127,6 +128,7 @@ describe('layered theme generate()', () => {
         'src/config/env.ts',
         'src/config/database.ts',
         'src/middleware/requestTimer.middleware.ts',
+        'src/types/posts.types.ts',
         'src/models/posts.model.ts',
         'src/services/posts.service.ts',
         'src/controllers/posts.controller.ts',
@@ -159,14 +161,16 @@ describe('layered theme generate()', () => {
     expect(middleware).toContain('await next()')
   })
 
-  it('reflects the user-specified fields in the model interface, query, and create signature', () => {
+  it('reflects the user-specified fields in the types file, model query, and create signature', () => {
     const files = theme.generate(
       baseChoice({ resources: [resource('users', 'name:string, age:number, isAdmin:boolean')] }),
     )
+    const types = files.find((f) => f.path === 'src/types/users.types.ts')!.contents
+    expect(types).toContain('name: string')
+    expect(types).toContain('age: number')
+    expect(types).toContain('isAdmin: boolean')
     const model = files.find((f) => f.path === 'src/models/users.model.ts')!.contents
-    expect(model).toContain('name: string')
-    expect(model).toContain('age: number')
-    expect(model).toContain('isAdmin: boolean')
+    expect(model).toContain(`import type { User } from '../types/users.types.js'`)
     expect(model).toContain('SELECT id, name, age, isAdmin, created_at AS "createdAt" FROM users')
     expect(model).toContain(
       'export async function createUser(data: { name: string; age: number; isAdmin: boolean }): Promise<User> {',
@@ -236,11 +240,11 @@ describe('layered theme generate()', () => {
     for (const plural of ['users', 'posts']) {
       expect(paths).toContain(`src/models/${plural}.model.ts`)
     }
-    const usersModel = files.find((f) => f.path === 'src/models/users.model.ts')!.contents
-    expect(usersModel).toContain('email: string')
-    const postsModel = files.find((f) => f.path === 'src/models/posts.model.ts')!.contents
-    expect(postsModel).toContain('views: number')
-    expect(postsModel).not.toContain('email')
+    const usersTypes = files.find((f) => f.path === 'src/types/users.types.ts')!.contents
+    expect(usersTypes).toContain('email: string')
+    const postsTypes = files.find((f) => f.path === 'src/types/posts.types.ts')!.contents
+    expect(postsTypes).toContain('views: number')
+    expect(postsTypes).not.toContain('email')
 
     const routesIndex = files.find((f) => f.path === 'src/routes/index.ts')!.contents
     expect(routesIndex).toContain(`import './users.routes.js'`)
@@ -255,15 +259,17 @@ describe('layered theme generate()', () => {
     )
     const modelFiles = files.filter((f) => f.path === 'src/models/users.model.ts')
     expect(modelFiles).toHaveLength(1)
-    expect(modelFiles[0].contents).toContain('name: string')
-    expect(modelFiles[0].contents).not.toContain('email')
+    const typesFiles = files.filter((f) => f.path === 'src/types/users.types.ts')
+    expect(typesFiles).toHaveLength(1)
+    expect(typesFiles[0].contents).toContain('name: string')
+    expect(typesFiles[0].contents).not.toContain('email')
   })
 
   it('falls back to a single "users" module with a default field when no resources are given', () => {
     const files = theme.generate(baseChoice({ resources: [] }))
     expect(files.map((f) => f.path)).toContain('src/models/users.model.ts')
-    const model = files.find((f) => f.path === 'src/models/users.model.ts')!.contents
-    expect(model).toContain('name: string')
+    const types = files.find((f) => f.path === 'src/types/users.types.ts')!.contents
+    expect(types).toContain('name: string')
   })
 
   it('omits config/auth.ts, roles.ts, and i18n.ts, and their app.ts wiring, when all three are skipped', () => {
@@ -365,6 +371,7 @@ describe('modular theme generate()', () => {
         'src/config/env.ts',
         'src/config/database.ts',
         'src/middleware/requestTimer.middleware.ts',
+        'src/modules/posts/posts.types.ts',
         'src/modules/posts/posts.model.ts',
         'src/modules/posts/posts.service.ts',
         'src/modules/posts/posts.controller.ts',
@@ -387,10 +394,11 @@ describe('modular theme generate()', () => {
     expect(routes).toContain(`from './posts.controller.js'`)
   })
 
-  it('points the model at the shared config two levels up', () => {
+  it('points the model at the shared config two levels up, and the types file in the same module folder', () => {
     const files = theme.generate(baseChoice())
     const model = files.find((f) => f.path === 'src/modules/posts/posts.model.ts')!.contents
     expect(model).toContain(`from '../../config/database.js'`)
+    expect(model).toContain(`import type { Post } from './posts.types.js'`)
   })
 
   it('generates one module folder per resource, each with its own fields', () => {
@@ -403,6 +411,98 @@ describe('modular theme generate()', () => {
     const modulesIndex = files.find((f) => f.path === 'src/modules/index.ts')!.contents
     expect(modulesIndex).toContain(`import './users/users.routes.js'`)
     expect(modulesIndex).toContain(`import './posts/posts.routes.js'`)
+  })
+})
+
+describe('language: js', () => {
+  const theme = findTheme('layered')!
+
+  it('uses .js file extensions for every generated file and generates no types folder', () => {
+    const files = theme.generate(baseChoice({ language: 'js' }))
+    for (const file of files) {
+      expect(file.path.endsWith('.js')).toBe(true)
+    }
+    expect(files.find((f) => f.path.includes('.types.'))).toBeUndefined()
+  })
+
+  it('strips TS-only syntax from the model, controller, and middleware', () => {
+    const files = theme.generate(baseChoice({ language: 'js' }))
+    const model = files.find((f) => f.path === 'src/models/posts.model.js')!.contents
+    expect(model).not.toContain('import type')
+    expect(model).not.toContain(': Promise<')
+    expect(model).not.toContain(' as Pool')
+    expect(model).not.toContain('interface ')
+
+    const controller = files.find((f) => f.path === 'src/controllers/posts.controller.js')!.contents
+    expect(controller).not.toContain('import type')
+    expect(controller).not.toContain(': Context')
+    expect(controller).not.toContain(' as {')
+
+    const middleware = files.find((f) => f.path === 'src/middleware/requestTimer.middleware.js')!.contents
+    expect(middleware).not.toContain('import type')
+    expect(middleware).not.toContain(': Middleware')
+    expect(middleware).toContain('export const requestTimer = async (ctx, next) => {')
+  })
+
+  it('still uses the exact user-specified fields, just without type annotations', () => {
+    const files = theme.generate(
+      baseChoice({ language: 'js', resources: [resource('users', 'name:string, age:number')] }),
+    )
+    const model = files.find((f) => f.path === 'src/models/users.model.js')!.contents
+    expect(model).toContain('SELECT id, name, age, created_at AS "createdAt" FROM users')
+    expect(model).toContain('export async function createUser(data) {')
+    expect(model).toContain('[data.name, data.age]')
+  })
+
+  it('strips the RoleHierarchy annotation from roles.js and the Context annotation everywhere', () => {
+    const files = theme.generate(baseChoice({ language: 'js', authorization: true }))
+    const roles = files.find((f) => f.path === 'src/config/roles.js')!.contents
+    expect(roles).not.toContain('import type')
+    expect(roles).not.toContain(': RoleHierarchy')
+    expect(roles).toContain('export const roleHierarchy = {')
+  })
+
+  it('generates working JS for every supported database adapter, with no leftover TS syntax', () => {
+    const dbIds = ['pg', 'knex', 'mongodb', 'mongoose', 'typeorm', 'sequelize', 'drizzle', 'none']
+    for (const databaseId of dbIds) {
+      const files = theme.generate(baseChoice({ language: 'js', databaseId }))
+      const model = files.find((f) => f.path === 'src/models/posts.model.js')!.contents
+      expect(model).toContain('listPosts')
+      expect(model).toContain('createPost')
+      expect(model).not.toContain('import type')
+      expect(model).not.toContain('interface ')
+      expect(model).not.toMatch(/:\s*(Promise|string|number|boolean)\b/)
+    }
+  })
+})
+
+describe('types folder', () => {
+  const theme = findTheme('layered')!
+
+  it('is generated for db adapters with a hand-rolled interface (pg, knex, mongodb, typeorm, sequelize, none)', () => {
+    for (const databaseId of ['pg', 'knex', 'mongodb', 'typeorm', 'sequelize', 'none']) {
+      const files = theme.generate(baseChoice({ databaseId }))
+      expect(files.find((f) => f.path === 'src/types/posts.types.ts')).toBeDefined()
+    }
+  })
+
+  it('is not generated for mongoose or drizzle, which rely on ORM-inferred types', () => {
+    for (const databaseId of ['mongoose', 'drizzle']) {
+      const files = theme.generate(baseChoice({ databaseId }))
+      expect(files.find((f) => f.path === 'src/types/posts.types.ts')).toBeUndefined()
+    }
+  })
+
+  it('uses the mongodb-specific _id/Date shape', () => {
+    const files = theme.generate(baseChoice({ databaseId: 'mongodb' }))
+    const types = files.find((f) => f.path === 'src/types/posts.types.ts')!.contents
+    expect(types).toContain('_id: unknown')
+    expect(types).toContain('createdAt: Date')
+  })
+
+  it('is never generated in JS mode', () => {
+    const files = theme.generate(baseChoice({ language: 'js' }))
+    expect(files.find((f) => f.path.includes('.types.'))).toBeUndefined()
   })
 })
 

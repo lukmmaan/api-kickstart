@@ -38,8 +38,8 @@ describe('runScaffoldWizard', () => {
   it('generates and writes files using the chosen theme, resource fields, and stack selections', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
     const write = vi.fn().mockReturnValue({ written: ['src/app.ts'], skipped: [] })
-    // theme=1 (layered), resources="widgets", fields="label:string, qty:number", auth/authorization/i18n all skipped
-    const prompter = fakeQuestioner(['1', 'widgets', 'label:string, qty:number', '', '', ''])
+    // theme=1 (layered), language=blank (defaults ts), resources="widgets", fields, auth/authorization/i18n skipped
+    const prompter = fakeQuestioner(['1', '', 'widgets', 'label:string, qty:number', '', '', ''])
 
     const selections = { framework: ['fastify'], database: ['mongodb'], validation: ['joi'] }
     const exitCode = await runScaffoldWizard(selections, '/some/project', { prompter, isInteractive: true, write })
@@ -50,61 +50,81 @@ describe('runScaffoldWizard', () => {
     expect(cwd).toBe('/some/project')
     const paths = (files as { path: string }[]).map((f) => f.path)
     expect(paths).toContain('src/models/widgets.model.ts')
-    const model = (files as { path: string; contents: string }[]).find(
-      (f) => f.path === 'src/models/widgets.model.ts',
+    const types = (files as { path: string; contents: string }[]).find(
+      (f) => f.path === 'src/types/widgets.types.ts',
     )!.contents
-    expect(model).toContain('label: string')
-    expect(model).toContain('qty: number')
+    expect(types).toContain('label: string')
+    expect(types).toContain('qty: number')
     const app = (files as { path: string; contents: string }[]).find((f) => f.path === 'src/app.ts')!.contents
     expect(app).toContain('fastify()')
+    vi.restoreAllMocks()
+  })
+
+  it('generates plain .js files with no types folder when JavaScript is picked', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const write = vi.fn().mockReturnValue({ written: [], skipped: [] })
+    // theme=1, language=2 (JavaScript), resources="widgets", fields, auth/authorization/i18n skipped
+    const prompter = fakeQuestioner(['1', '2', 'widgets', 'label:string', '', '', ''])
+
+    await runScaffoldWizard({}, '/some/project', { prompter, isInteractive: true, write })
+
+    const [files] = write.mock.calls[0]
+    const paths = (files as { path: string }[]).map((f) => f.path)
+    expect(paths).toContain('src/models/widgets.model.js')
+    expect(paths.some((p) => p.includes('.types.'))).toBe(false)
+    expect(paths.every((p) => p.endsWith('.js'))).toBe(true)
+    const model = (files as { path: string; contents: string }[]).find(
+      (f) => f.path === 'src/models/widgets.model.js',
+    )!.contents
+    expect(model).not.toContain('import type')
     vi.restoreAllMocks()
   })
 
   it('prompts for fields once per comma-separated resource name, each independently', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
     const write = vi.fn().mockReturnValue({ written: [], skipped: [] })
-    // theme=1, resources="users, posts", fields(users), fields(posts), auth/authorization/i18n skipped
-    const prompter = fakeQuestioner(['1', 'users, posts', 'name:string', 'title:string, views:number', '', '', ''])
+    // theme=1, language blank, resources="users, posts", fields(users), fields(posts), auth/authorization/i18n skipped
+    const prompter = fakeQuestioner(['1', '', 'users, posts', 'name:string', 'title:string, views:number', '', '', ''])
 
     await runScaffoldWizard({}, '/some/project', { prompter, isInteractive: true, write })
 
     const [files] = write.mock.calls[0]
-    const usersModel = (files as { path: string; contents: string }[]).find(
-      (f) => f.path === 'src/models/users.model.ts',
+    const usersTypes = (files as { path: string; contents: string }[]).find(
+      (f) => f.path === 'src/types/users.types.ts',
     )!.contents
-    expect(usersModel).toContain('name: string')
-    expect(usersModel).not.toContain('views')
-    const postsModel = (files as { path: string; contents: string }[]).find(
-      (f) => f.path === 'src/models/posts.model.ts',
+    expect(usersTypes).toContain('name: string')
+    expect(usersTypes).not.toContain('views')
+    const postsTypes = (files as { path: string; contents: string }[]).find(
+      (f) => f.path === 'src/types/posts.types.ts',
     )!.contents
-    expect(postsModel).toContain('title: string')
-    expect(postsModel).toContain('views: number')
+    expect(postsTypes).toContain('title: string')
+    expect(postsTypes).toContain('views: number')
     vi.restoreAllMocks()
   })
 
   it('defaults the resource to "users" and the field to name:string when everything is left blank', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
     const write = vi.fn().mockReturnValue({ written: [], skipped: [] })
-    // modular theme, blank resource answer, blank fields answer, auth/authorization/i18n skipped
-    const prompter = fakeQuestioner(['2', '', '', '', '', ''])
+    // modular theme, language blank, blank resource answer, blank fields answer, auth/authorization/i18n skipped
+    const prompter = fakeQuestioner(['2', '', '', '', '', '', ''])
 
     await runScaffoldWizard({}, '/some/project', { prompter, isInteractive: true, write })
 
     const [files] = write.mock.calls[0]
     const paths = (files as { path: string }[]).map((f) => f.path)
     expect(paths).toContain('src/modules/users/users.model.ts')
-    const model = (files as { path: string; contents: string }[]).find(
-      (f) => f.path === 'src/modules/users/users.model.ts',
+    const types = (files as { path: string; contents: string }[]).find(
+      (f) => f.path === 'src/modules/users/users.types.ts',
     )!.contents
-    expect(model).toContain('name: string')
+    expect(types).toContain('name: string')
     vi.restoreAllMocks()
   })
 
   it('wires jwt auth, authorization, and i18n when all three are answered yes', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
     const write = vi.fn().mockReturnValue({ written: [], skipped: [] })
-    // theme=1, resources="users", fields default, auth=1 (jwt), authorization=1 (yes), i18n=1 (yes)
-    const prompter = fakeQuestioner(['1', 'users', '', '1', '1', '1'])
+    // theme=1, language blank, resources="users", fields default, auth=1 (jwt), authorization=1 (yes), i18n=1 (yes)
+    const prompter = fakeQuestioner(['1', '', 'users', '', '1', '1', '1'])
 
     await runScaffoldWizard({}, '/some/project', { prompter, isInteractive: true, write })
 
@@ -123,7 +143,7 @@ describe('runScaffoldWizard', () => {
   it('skips auth, authorization, and i18n entirely when all three are left blank', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
     const write = vi.fn().mockReturnValue({ written: [], skipped: [] })
-    const prompter = fakeQuestioner(['1', 'users', '', '', '', ''])
+    const prompter = fakeQuestioner(['1', '', 'users', '', '', '', ''])
 
     await runScaffoldWizard({}, '/some/project', { prompter, isInteractive: true, write })
 
@@ -141,7 +161,7 @@ describe('runScaffoldWizard', () => {
       logs.push(line)
     })
     const write = vi.fn().mockReturnValue({ written: ['src/app.ts'], skipped: ['src/index.ts'] })
-    const prompter = fakeQuestioner(['1', 'posts', 'title:string', '', '', ''])
+    const prompter = fakeQuestioner(['1', '', 'posts', 'title:string', '', '', ''])
 
     const exitCode = await runScaffoldWizard({}, '/some/project', { prompter, isInteractive: true, write })
 
