@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseSelection, promptCategory, promptChoice, promptText, type Questioner } from './prompt.js'
+import { parseSelection, promptCategory, promptChoice, promptMultiChoice, promptText, type Questioner } from './prompt.js'
 import { findCategory } from './stack.js'
 
 describe('parseSelection', () => {
@@ -90,6 +90,38 @@ describe('promptChoice', () => {
     expect(output).toContain('Pick one')
     expect(output).toContain('Layered')
     expect(output).toContain('Modular')
+  })
+})
+
+describe('promptMultiChoice', () => {
+  const choices = [
+    { id: 'requestId', label: 'Request ID' },
+    { id: 'logger', label: 'Logger' },
+    { id: 'helmet', label: 'Helmet' },
+  ]
+
+  it('maps picked numbers back to choice ids', async () => {
+    const ids = await promptMultiChoice(fakeQuestioner('1,3'), 'Middleware', 'Pick any', choices, () => {})
+    expect(ids).toEqual(['requestId', 'helmet'])
+  })
+
+  it('returns an empty array when the user presses enter with no input', async () => {
+    const ids = await promptMultiChoice(fakeQuestioner(''), 'Middleware', 'Pick any', choices, () => {})
+    expect(ids).toEqual([])
+  })
+
+  it('drops out-of-range picks', async () => {
+    const ids = await promptMultiChoice(fakeQuestioner('2,9'), 'Middleware', 'Pick any', choices, () => {})
+    expect(ids).toEqual(['logger'])
+  })
+
+  it('prints the title, question, and every choice label', async () => {
+    const logs: string[] = []
+    await promptMultiChoice(fakeQuestioner(''), 'Middleware', 'Pick any', choices, (line) => logs.push(line))
+    const output = logs.join('\n')
+    expect(output).toContain('Middleware')
+    expect(output).toContain('Pick any')
+    expect(output).toContain('Helmet')
   })
 })
 

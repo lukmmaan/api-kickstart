@@ -113,6 +113,9 @@ function baseChoice(overrides: Partial<ScaffoldChoice> = {}): ScaffoldChoice {
     authorization: false,
     i18n: false,
     language: 'ts',
+    opsEndpoints: [],
+    productionEssentials: false,
+    securityMiddleware: [],
     ...overrides,
   }
 }
@@ -503,6 +506,119 @@ describe('types folder', () => {
   it('is never generated in JS mode', () => {
     const files = theme.generate(baseChoice({ language: 'js' }))
     expect(files.find((f) => f.path.includes('.types.'))).toBeUndefined()
+  })
+})
+
+describe('ops endpoints', () => {
+  const theme = findTheme('layered')!
+
+  it('adds no ops statements or blank separator when none are chosen', () => {
+    const files = theme.generate(baseChoice())
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).not.toContain('app.health()')
+    expect(app).not.toContain('app.metrics()')
+    expect(app).not.toContain('app.openapi(')
+  })
+
+  it('adds app.health() and app.metrics() in canonical order regardless of selection order', () => {
+    const files = theme.generate(baseChoice({ opsEndpoints: ['metrics', 'health'] }))
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app.indexOf('app.health()')).toBeLessThan(app.indexOf('app.metrics()'))
+  })
+
+  it('adds a full app.openapi({...}) block when openapi is chosen', () => {
+    const files = theme.generate(baseChoice({ opsEndpoints: ['openapi'] }))
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).toContain(`app.openapi({`)
+    expect(app).toContain(`info: { title: 'API', version: '1.0.0' },`)
+    expect(app).toContain(`json: '/openapi.json',`)
+    expect(app).toContain(`serve: '/docs',`)
+  })
+})
+
+describe('production essentials', () => {
+  const theme = findTheme('layered')!
+
+  it('generates no lock.ts and no gracefulShutdown wiring when off', () => {
+    const files = theme.generate(baseChoice())
+    expect(files.find((f) => f.path === 'src/config/lock.ts')).toBeUndefined()
+    const index = files.find((f) => f.path === 'src/index.ts')!.contents
+    expect(index).not.toContain('gracefulShutdown')
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).not.toContain('app.schedule(')
+  })
+
+  it('generates lock.ts, wires gracefulShutdown into index.ts, and adds a schedule block to app.ts', () => {
+    const files = theme.generate(baseChoice({ productionEssentials: true }))
+    const lock = files.find((f) => f.path === 'src/config/lock.ts')!.contents
+    expect(lock).toContain(`import { pgLock } from '@api-kickstart/api-kickstart/pg'`)
+    expect(lock).toContain('export const lock = pgLock(db.client as Pool)')
+
+    const index = files.find((f) => f.path === 'src/index.ts')!.contents
+    expect(index).toContain(`import { gracefulShutdown } from '@api-kickstart/api-kickstart'`)
+    expect(index).toContain('gracefulShutdown(app)')
+
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).toContain(`import { lock } from './config/lock.js'`)
+    expect(app).toContain(`app.schedule('example-job', { interval: '5m', lock }, async () => {`)
+    expect(app).toContain(`console.log('running example-job')`)
+  })
+
+  it('picks the matching lock factory per database adapter, falling back to memoryLock', () => {
+    const cases: [string, string][] = [
+      ['pg', 'pgLock'],
+      ['knex', 'knexLock'],
+      ['mongodb', 'mongodbLock'],
+      ['mongoose', 'memoryLock'],
+      ['none', 'memoryLock'],
+    ]
+    for (const [databaseId, factory] of cases) {
+      const files = theme.generate(baseChoice({ databaseId, productionEssentials: true }))
+      const lock = files.find((f) => f.path === 'src/config/lock.ts')!.contents
+      expect(lock).toContain(`export const lock = ${factory}(`)
+    }
+  })
+
+  it('strips TS-only cast syntax from lock.js in JS mode', () => {
+    const files = theme.generate(baseChoice({ language: 'js', productionEssentials: true }))
+    const lock = files.find((f) => f.path === 'src/config/lock.js')!.contents
+    expect(lock).not.toContain('import type')
+    expect(lock).not.toContain(' as Pool')
+    expect(lock).toContain('export const lock = pgLock(db.client)')
+  })
+})
+
+describe('security middleware', () => {
+  const theme = findTheme('layered')!
+
+  it('adds no security import or middleware entries when none are chosen', () => {
+    const files = theme.generate(baseChoice())
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).not.toContain('@api-kickstart/api-kickstart/middleware')
+    expect(app).toContain('middleware: [requestTimer],')
+  })
+
+  it('adds a combined import and factory calls in canonical order regardless of selection order', () => {
+    const files = theme.generate(baseChoice({ securityMiddleware: ['csrf', 'helmet', 'requestId'] }))
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).toContain(
+      `import { requestId, helmet, csrf } from '@api-kickstart/api-kickstart/middleware'`,
+    )
+    expect(app).toContain('middleware: [requestTimer, requestId(), helmet(), csrf()],')
+  })
+
+  it('uses real default option values for rateLimit, bodyLimit, and timeout', () => {
+    const files = theme.generate(baseChoice({ securityMiddleware: ['rateLimit', 'bodyLimit', 'timeout'] }))
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).toContain(`rateLimit({ window: '1m', max: 100 })`)
+    expect(app).toContain(`bodyLimit({ maxBytes: 1_000_000 })`)
+    expect(app).toContain(`timeout({ duration: '30s' })`)
+  })
+
+  it('combines with i18n middleware in the right order', () => {
+    const files = theme.generate(baseChoice({ securityMiddleware: ['logger'], i18n: true }))
+    const app = files.find((f) => f.path === 'src/app.ts')!.contents
+    expect(app).toContain('middleware: [requestTimer, logger(), i18n.middleware],')
   })
 })
 

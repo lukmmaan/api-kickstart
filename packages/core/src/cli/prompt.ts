@@ -58,6 +58,23 @@ export async function promptChoice(
   return picks.length > 0 ? choices[picks[0] - 1].id : null
 }
 
+/** Multi-select prompt over a plain id/label list — comma-separated numbers, blank to skip. */
+export async function promptMultiChoice(
+  rl: Questioner,
+  title: string,
+  question: string,
+  choices: SimpleChoice[],
+  log: (line: string) => void = console.log,
+): Promise<string[]> {
+  log(`\n${title}: ${question}`)
+  choices.forEach((choice, i) => log(`  ${i + 1}) ${choice.label}`))
+
+  const answer = (await rl.question('Enter numbers separated by commas, or press enter to skip: ')).trim()
+  if (!answer) return []
+
+  return parseSelection(answer, choices.length, true).map((n) => choices[n - 1].id)
+}
+
 export async function promptText(
   rl: Questioner,
   question: string,

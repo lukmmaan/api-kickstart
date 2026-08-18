@@ -18,6 +18,17 @@ export interface ScaffoldResource {
 
 export type AuthChoice = 'jwt' | 'apiKey' | 'both' | 'none'
 export type ScaffoldLang = 'ts' | 'js'
+export type OpsEndpoint = 'health' | 'metrics' | 'openapi'
+export type SecurityMiddlewareId =
+  | 'requestId'
+  | 'logger'
+  | 'helmet'
+  | 'compression'
+  | 'rateLimit'
+  | 'bodyLimit'
+  | 'timeout'
+  | 'idempotency'
+  | 'csrf'
 
 export interface ScaffoldChoice {
   frameworkId: string
@@ -28,6 +39,9 @@ export interface ScaffoldChoice {
   authorization: boolean
   i18n: boolean
   language: ScaffoldLang
+  opsEndpoints: OpsEndpoint[]
+  productionEssentials: boolean
+  securityMiddleware: SecurityMiddlewareId[]
 }
 
 export interface ProjectTheme {
@@ -432,6 +446,61 @@ function i18nConfigFile(): string {
   ])
 }
 
+function lockConfigFile(databaseId: string, lang: ScaffoldLang): string {
+  const isTs = lang === 'ts'
+  switch (databaseId) {
+    case 'pg':
+      return lines([
+        isTs && `import type { Pool } from 'pg'`,
+        `import { pgLock } from '@api-kickstart/api-kickstart/pg'`,
+        `import { db } from './database.js'`,
+        ``,
+        `export const lock = pgLock(${cast(lang, 'db.client', 'Pool')})`,
+      ])
+    case 'knex':
+      return lines([
+        isTs && `import type { Knex } from 'knex'`,
+        `import { knexLock } from '@api-kickstart/api-kickstart/knex'`,
+        `import { db } from './database.js'`,
+        ``,
+        `export const lock = knexLock(${cast(lang, 'db.client', 'Knex')})`,
+      ])
+    case 'mongodb':
+      return lines([
+        isTs && `import type { Db } from 'mongodb'`,
+        `import { mongodbLock } from '@api-kickstart/api-kickstart/mongodb'`,
+        `import { db } from './database.js'`,
+        ``,
+        `export const lock = mongodbLock(${cast(lang, 'db.client', 'Db')})`,
+      ])
+    default:
+      return lines([
+        `import { memoryLock } from '@api-kickstart/api-kickstart/memory'`,
+        ``,
+        `// Single-process lock — good for local dev or a single-instance deployment.`,
+        `// Swap for pgLock/knexLock/mongodbLock/redisLock if you run more than one instance.`,
+        `export const lock = memoryLock()`,
+      ])
+  }
+}
+
+interface SecurityMiddlewareTemplate {
+  importName: string
+  factoryExpr: string
+}
+
+const SECURITY_MIDDLEWARE_TEMPLATES: Record<SecurityMiddlewareId, SecurityMiddlewareTemplate> = {
+  requestId: { importName: 'requestId', factoryExpr: 'requestId()' },
+  logger: { importName: 'logger', factoryExpr: 'logger()' },
+  helmet: { importName: 'helmet', factoryExpr: 'helmet()' },
+  compression: { importName: 'compression', factoryExpr: 'compression()' },
+  rateLimit: { importName: 'rateLimit', factoryExpr: `rateLimit({ window: '1m', max: 100 })` },
+  bodyLimit: { importName: 'bodyLimit', factoryExpr: `bodyLimit({ maxBytes: 1_000_000 })` },
+  timeout: { importName: 'timeout', factoryExpr: `timeout({ duration: '30s' })` },
+  idempotency: { importName: 'idempotency', factoryExpr: 'idempotency()' },
+  csrf: { importName: 'csrf', factoryExpr: 'csrf()' },
+}
+
 function drizzleColumnExpr(field: ScaffoldField): string {
   switch (field.type) {
     case 'number':
@@ -725,13 +794,50 @@ function requestTimerMiddlewareFile(lang: ScaffoldLang): string {
   ])
 }
 
+const SECURITY_MIDDLEWARE_ORDER: SecurityMiddlewareId[] = [
+  'requestId',
+  'logger',
+  'helmet',
+  'compression',
+  'rateLimit',
+  'bodyLimit',
+  'timeout',
+  'idempotency',
+  'csrf',
+]
+
+const OPS_ENDPOINT_ORDER: OpsEndpoint[] = ['health', 'metrics', 'openapi']
+
+function opsEndpointStmt(id: OpsEndpoint): string {
+  switch (id) {
+    case 'health':
+      return `app.health()`
+    case 'metrics':
+      return `app.metrics()`
+    default:
+      return lines([
+        `app.openapi({`,
+        `  info: { title: 'API', version: '1.0.0' },`,
+        `  json: '/openapi.json',`,
+        `  serve: '/docs',`,
+        `})`,
+      ]).trimEnd()
+  }
+}
+
 function appFile(choice: ScaffoldChoice): string {
   const framework = frameworkTemplate(choice.frameworkId)
   const validator = validatorTemplate(choice.validatorId)
   const hasDb = choice.databaseId !== 'none' && databaseConfigFile(choice.databaseId) !== null
   const hasAuth = choice.authId !== 'none'
   const includesJwt = choice.authId === 'jwt' || choice.authId === 'both'
-  const middlewareList = ['requestTimer', ...(choice.i18n ? ['i18n.middleware'] : [])].join(', ')
+  const security = SECURITY_MIDDLEWARE_ORDER.filter((id) => choice.securityMiddleware.includes(id))
+  const middlewareList = [
+    'requestTimer',
+    ...security.map((id) => SECURITY_MIDDLEWARE_TEMPLATES[id].factoryExpr),
+    ...(choice.i18n ? ['i18n.middleware'] : []),
+  ].join(', ')
+  const ops = OPS_ENDPOINT_ORDER.filter((id) => choice.opsEndpoints.includes(id))
 
   return lines([
     `import { createApp } from '@api-kickstart/api-kickstart'`,
@@ -739,9 +845,12 @@ function appFile(choice: ScaffoldChoice): string {
     validator && validator.importLine,
     hasDb && `import { db } from './config/database.js'`,
     `import { requestTimer } from './middleware/requestTimer.middleware.js'`,
+    security.length > 0 &&
+      `import { ${security.map((id) => SECURITY_MIDDLEWARE_TEMPLATES[id].importName).join(', ')} } from '@api-kickstart/api-kickstart/middleware'`,
     hasAuth && `import { auth } from './config/auth.js'`,
     choice.authorization && `import { roleHierarchy } from './config/roles.js'`,
     choice.i18n && `import { i18n } from './config/i18n.js'`,
+    choice.productionEssentials && `import { lock } from './config/lock.js'`,
     ``,
     `export const app = createApp({`,
     `  framework: ${framework.factoryExpr},`,
@@ -751,9 +860,15 @@ function appFile(choice: ScaffoldChoice): string {
     choice.authorization && `  roleHierarchy,`,
     `  middleware: [${middlewareList}],`,
     `})`,
+    ops.length > 0 && ``,
+    ...ops.map((id) => opsEndpointStmt(id)),
     includesJwt && ``,
     includesJwt &&
       `app.useAuthRoutes({ login: '/auth/login', refresh: '/auth/refresh', logout: '/auth/logout', me: '/auth/me' })`,
+    choice.productionEssentials && ``,
+    choice.productionEssentials && `app.schedule('example-job', { interval: '5m', lock }, async () => {`,
+    choice.productionEssentials && `  console.log('running example-job')`,
+    choice.productionEssentials && `})`,
   ])
 }
 
@@ -766,15 +881,18 @@ function envFile(): string {
   ])
 }
 
-function indexFile(routesBarrelPath: string): string {
+function indexFile(routesBarrelPath: string, productionEssentials: boolean): string {
   return lines([
     `import { env } from './config/env.js'`,
     `import { app } from './app.js'`,
+    productionEssentials && `import { gracefulShutdown } from '@api-kickstart/api-kickstart'`,
     `import '${routesBarrelPath}'`,
     ``,
     `app.listen(env.port, () => {`,
     `  console.log(\`Server listening on http://localhost:\${env.port}\`)`,
     `})`,
+    productionEssentials && ``,
+    productionEssentials && `gracefulShutdown(app)`,
   ])
 }
 
@@ -817,6 +935,9 @@ function generateLayered(choice: ScaffoldChoice): ScaffoldFile[] {
   }
   if (choice.i18n) {
     files.push({ path: `src/config/i18n.${ext}`, contents: i18nConfigFile() })
+  }
+  if (choice.productionEssentials) {
+    files.push({ path: `src/config/lock.${ext}`, contents: lockConfigFile(choice.databaseId, lang) })
   }
 
   files.push({
@@ -861,7 +982,10 @@ function generateLayered(choice: ScaffoldChoice): ScaffoldFile[] {
     contents: lines(resources.map(({ names }) => `import './${names.plural}.routes.js'`)),
   })
   files.push({ path: `src/app.${ext}`, contents: appFile(choice) })
-  files.push({ path: `src/index.${ext}`, contents: indexFile('./routes/index.js') })
+  files.push({
+    path: `src/index.${ext}`,
+    contents: indexFile('./routes/index.js', choice.productionEssentials),
+  })
 
   return files
 }
@@ -888,6 +1012,9 @@ function generateModular(choice: ScaffoldChoice): ScaffoldFile[] {
   }
   if (choice.i18n) {
     files.push({ path: `src/config/i18n.${ext}`, contents: i18nConfigFile() })
+  }
+  if (choice.productionEssentials) {
+    files.push({ path: `src/config/lock.${ext}`, contents: lockConfigFile(choice.databaseId, lang) })
   }
 
   files.push({
@@ -933,7 +1060,10 @@ function generateModular(choice: ScaffoldChoice): ScaffoldFile[] {
     contents: lines(resources.map(({ names }) => `import './${names.plural}/${names.plural}.routes.js'`)),
   })
   files.push({ path: `src/app.${ext}`, contents: appFile(choice) })
-  files.push({ path: `src/index.${ext}`, contents: indexFile('./modules/index.js') })
+  files.push({
+    path: `src/index.${ext}`,
+    contents: indexFile('./modules/index.js', choice.productionEssentials),
+  })
 
   return files
 }
