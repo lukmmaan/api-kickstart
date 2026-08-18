@@ -8,6 +8,7 @@ import {
   type AuthChoice,
   type ScaffoldChoice,
   type ScaffoldFile,
+  type ScaffoldLang,
   type ScaffoldResource,
 } from '../scaffold.js'
 import { writeScaffoldFiles, type WriteResult } from '../write-files.js'
@@ -32,6 +33,11 @@ const YES_NO = [
   { id: 'no', label: 'No' },
 ]
 
+const LANG_CHOICES: { id: ScaffoldLang; label: string }[] = [
+  { id: 'ts', label: 'TypeScript' },
+  { id: 'js', label: 'JavaScript' },
+]
+
 export async function runScaffoldWizard(
   selections: Record<string, string[]>,
   cwd: string,
@@ -42,6 +48,7 @@ export async function runScaffoldWizard(
 
   const rl = options.prompter ?? createPrompter()
   let themeId: string | null
+  let language: ScaffoldLang = 'ts'
   const resources: ScaffoldResource[] = []
   let authId: AuthChoice = 'none'
   let authorization = false
@@ -55,6 +62,14 @@ export async function runScaffoldWizard(
       PROJECT_THEMES.map((theme) => ({ id: theme.id, label: theme.label })),
     )
     if (!themeId) return 0
+
+    const langAnswer = await promptChoice(
+      rl,
+      'Language',
+      'Generate TypeScript or JavaScript?',
+      LANG_CHOICES,
+    )
+    language = (langAnswer as ScaffoldLang | null) ?? 'ts'
 
     const resourcesAnswer = await promptText(
       rl,
@@ -111,6 +126,7 @@ export async function runScaffoldWizard(
     authId,
     authorization,
     i18n,
+    language,
   }
 
   const files = theme.generate(choice)

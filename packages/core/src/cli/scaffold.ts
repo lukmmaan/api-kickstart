@@ -17,6 +17,7 @@ export interface ScaffoldResource {
 }
 
 export type AuthChoice = 'jwt' | 'apiKey' | 'both' | 'none'
+export type ScaffoldLang = 'ts' | 'js'
 
 export interface ScaffoldChoice {
   frameworkId: string
@@ -26,6 +27,7 @@ export interface ScaffoldChoice {
   authId: AuthChoice
   authorization: boolean
   i18n: boolean
+  language: ScaffoldLang
 }
 
 export interface ProjectTheme {
@@ -119,6 +121,38 @@ function tsType(type: ScaffoldFieldType): string {
 
 function fieldsTypeLiteral(fields: ScaffoldField[]): string {
   return `{ ${fields.map((f) => `${f.name}: ${tsType(f.type)}`).join('; ')} }`
+}
+
+/** ": Type" in TS, "" in JS — for return-type and variable-type annotations. */
+function ann(lang: ScaffoldLang, type: string): string {
+  return lang === 'ts' ? `: ${type}` : ''
+}
+
+/** "expr as Type" in TS, plain "expr" in JS. */
+function cast(lang: ScaffoldLang, expr: string, type: string): string {
+  return lang === 'ts' ? `${expr} as ${type}` : expr
+}
+
+/** "name: Type" in TS, "name" in JS — for a single typed parameter. */
+function param(lang: ScaffoldLang, name: string, type: string): string {
+  return lang === 'ts' ? `${name}: ${type}` : name
+}
+
+/** Database adapters whose model body hand-declares its own return-shape interface (candidates for a types/ file). */
+const DB_ADAPTERS_WITH_INTERFACE = new Set(['pg', 'knex', 'typeorm', 'sequelize', 'mongodb', 'none'])
+
+function resourceTypesFile(databaseId: string, names: ResourceNames, fields: ScaffoldField[]): string {
+  const interfaceFields = fields.map((f) => `  ${f.name}: ${tsType(f.type)}`)
+  const idLine = databaseId === 'mongodb' ? `  _id: unknown` : databaseId === 'knex' || databaseId === 'typeorm' || databaseId === 'sequelize' ? `  id: number` : `  id: string`
+  const createdAtLine = databaseId === 'mongodb' ? `  createdAt: Date` : `  createdAt: string`
+
+  return lines([
+    `export interface ${names.Pascal} {`,
+    idLine,
+    ...interfaceFields,
+    createdAtLine,
+    `}`,
+  ])
 }
 
 interface FrameworkTemplate {
@@ -369,12 +403,12 @@ function authConfigFile(authId: AuthChoice): string | null {
   }
 }
 
-function rolesConfigFile(): string {
+function rolesConfigFile(lang: ScaffoldLang): string {
   return lines([
-    `import type { RoleHierarchy } from '@api-kickstart/api-kickstart'`,
-    ``,
+    lang === 'ts' && `import type { RoleHierarchy } from '@api-kickstart/api-kickstart'`,
+    lang === 'ts' && ``,
     `// admin inherits editor's access, editor inherits viewer's — adjust to match your app's roles.`,
-    `export const roleHierarchy: RoleHierarchy = {`,
+    `export const roleHierarchy${ann(lang, 'RoleHierarchy')} = {`,
     `  admin: ['editor'],`,
     `  editor: ['viewer'],`,
     `}`,
@@ -409,11 +443,20 @@ function drizzleColumnExpr(field: ScaffoldField): string {
   }
 }
 
-function dbModelBody(id: string, names: ResourceNames, dbImportPath: string, fields: ScaffoldField[]): string {
+function dbModelBody(
+  id: string,
+  names: ResourceNames,
+  dbImportPath: string,
+  fields: ScaffoldField[],
+  lang: ScaffoldLang,
+  typesImportPath: string,
+): string {
   const { plural, Pascal, PascalPlural } = names
   const fieldNames = fields.map((f) => f.name)
   const dataType = fieldsTypeLiteral(fields)
-  const interfaceFields = fields.map((f) => `  ${f.name}: ${tsType(f.type)}`)
+  const isTs = lang === 'ts'
+  const hasTypesFile = isTs && DB_ADAPTERS_WITH_INTERFACE.has(id)
+  const typeImportLine = hasTypesFile && `import type { ${Pascal} } from '${typesImportPath}'`
 
   switch (id) {
     case 'pg':
@@ -422,35 +465,29 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string, fie
       const columns = fieldNames.join(', ')
       const returning = `id, ${columns}, created_at AS "createdAt"`
       const values = fieldNames.map((n) => `data.${n}`).join(', ')
-      const clientAccessor = id === 'pg' ? `db.client as Pool` : `db.client as DataSource`
-      const clientImport = id === 'pg' ? `import type { Pool } from 'pg'` : `import type { DataSource } from 'typeorm'`
-      const runner = id === 'pg' ? 'pool()' : 'dataSource()'
-      const listStmt =
-        id === 'pg'
-          ? `const { rows } = await pool().query(\n    'SELECT id, ${columns}, created_at AS "createdAt" FROM ${plural} ORDER BY created_at DESC',\n  )\n  return rows`
-          : `return dataSource().query('SELECT id, ${columns}, created_at AS "createdAt" FROM ${plural} ORDER BY created_at DESC')`
-      const createStmt =
-        id === 'pg'
-          ? `const { rows } = await pool().query(\n    'INSERT INTO ${plural} (${columns}) VALUES (${placeholders}) RETURNING ${returning}',\n    [${values}],\n  )\n  return rows[0]`
-          : `const rows = await dataSource().query(\n    'INSERT INTO ${plural} (${columns}) VALUES (${placeholders}) RETURNING ${returning}',\n    [${values}],\n  )\n  return rows[0]`
+      const isPg = id === 'pg'
+      const clientTypeLine = isPg ? `import type { Pool } from 'pg'` : `import type { DataSource } from 'typeorm'`
+      const clientCast = isPg ? cast(lang, 'db.client', 'Pool') : cast(lang, 'db.client', 'DataSource')
+      const runnerName = isPg ? 'pool' : 'dataSource'
+      const listStmt = isPg
+        ? `const { rows } = await pool().query(\n    'SELECT id, ${columns}, created_at AS "createdAt" FROM ${plural} ORDER BY created_at DESC',\n  )\n  return rows`
+        : `return dataSource().query('SELECT id, ${columns}, created_at AS "createdAt" FROM ${plural} ORDER BY created_at DESC')`
+      const createStmt = isPg
+        ? `const { rows } = await pool().query(\n    'INSERT INTO ${plural} (${columns}) VALUES (${placeholders}) RETURNING ${returning}',\n    [${values}],\n  )\n  return rows[0]`
+        : `const rows = await dataSource().query(\n    'INSERT INTO ${plural} (${columns}) VALUES (${placeholders}) RETURNING ${returning}',\n    [${values}],\n  )\n  return rows[0]`
 
       return lines([
-        clientImport,
+        isTs && clientTypeLine,
+        typeImportLine,
         `import { db } from '${dbImportPath}'`,
         ``,
-        `export interface ${Pascal} {`,
-        `  id: string`,
-        ...interfaceFields,
-        `  createdAt: string`,
-        `}`,
+        `const ${runnerName} = () => ${clientCast}`,
         ``,
-        `const ${runner.replace('()', '')} = () => ${clientAccessor}`,
-        ``,
-        `export async function list${PascalPlural}(): Promise<${Pascal}[]> {`,
+        `export async function list${PascalPlural}()${ann(lang, `Promise<${Pascal}[]>`)} {`,
         `  ${listStmt}`,
         `}`,
         ``,
-        `export async function create${Pascal}(data: ${dataType}): Promise<${Pascal}> {`,
+        `export async function create${Pascal}(${param(lang, 'data', dataType)})${ann(lang, `Promise<${Pascal}>`)} {`,
         `  ${createStmt}`,
         `}`,
       ])
@@ -459,22 +496,17 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string, fie
       const selectCols = ['id', ...fieldNames, 'created_at as createdAt'].map((c) => `'${c}'`).join(', ')
       const returnCols = `['id', ${fieldNames.map((n) => `'${n}'`).join(', ')}, 'created_at as createdAt']`
       return lines([
-        `import type { Knex } from 'knex'`,
+        isTs && `import type { Knex } from 'knex'`,
+        typeImportLine,
         `import { db } from '${dbImportPath}'`,
         ``,
-        `export interface ${Pascal} {`,
-        `  id: number`,
-        ...interfaceFields,
-        `  createdAt: string`,
-        `}`,
+        `const table = () => (${cast(lang, 'db.client', 'Knex')})('${plural}')`,
         ``,
-        `const table = () => (db.client as Knex)('${plural}')`,
-        ``,
-        `export async function list${PascalPlural}(): Promise<${Pascal}[]> {`,
+        `export async function list${PascalPlural}()${ann(lang, `Promise<${Pascal}[]>`)} {`,
         `  return table().select(${selectCols}).orderBy('created_at', 'desc')`,
         `}`,
         ``,
-        `export async function create${Pascal}(data: ${dataType}): Promise<${Pascal}> {`,
+        `export async function create${Pascal}(${param(lang, 'data', dataType)})${ann(lang, `Promise<${Pascal}>`)} {`,
         `  const [row] = await table().insert(data).returning(${returnCols})`,
         `  return row`,
         `}`,
@@ -482,23 +514,18 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string, fie
     }
     case 'mongodb':
       return lines([
-        `import type { Db } from 'mongodb'`,
+        isTs && `import type { Db } from 'mongodb'`,
+        typeImportLine,
         `import { db } from '${dbImportPath}'`,
         ``,
-        `export interface ${Pascal} {`,
-        `  _id: unknown`,
-        ...interfaceFields,
-        `  createdAt: Date`,
-        `}`,
+        `const collection = () => (${cast(lang, 'db.client', 'Db')}).collection('${plural}')`,
         ``,
-        `const collection = () => (db.client as Db).collection('${plural}')`,
-        ``,
-        `export async function list${PascalPlural}(): Promise<${Pascal}[]> {`,
+        `export async function list${PascalPlural}()${ann(lang, `Promise<${Pascal}[]>`)} {`,
         `  const docs = await collection().find().sort({ createdAt: -1 }).toArray()`,
-        `  return docs as unknown as ${Pascal}[]`,
+        `  return ${isTs ? `docs as unknown as ${Pascal}[]` : 'docs'}`,
         `}`,
         ``,
-        `export async function create${Pascal}(data: ${dataType}): Promise<${Pascal}> {`,
+        `export async function create${Pascal}(${param(lang, 'data', dataType)})${ann(lang, `Promise<${Pascal}>`)} {`,
         `  const doc = { ...data, createdAt: new Date() }`,
         `  const { insertedId } = await collection().insertOne(doc)`,
         `  return { _id: insertedId, ...doc }`,
@@ -508,7 +535,7 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string, fie
       const mongooseTypeOf: Record<ScaffoldFieldType, string> = { string: 'String', number: 'Number', boolean: 'Boolean' }
       const schemaFields = fields.map((f) => `  ${f.name}: { type: ${mongooseTypeOf[f.type]}, required: true },`)
       return lines([
-        `import { Schema, type Connection } from 'mongoose'`,
+        isTs ? `import { Schema, type Connection } from 'mongoose'` : `import { Schema } from 'mongoose'`,
         `import { db } from '${dbImportPath}'`,
         ``,
         `const ${names.singular}Schema = new Schema({`,
@@ -516,13 +543,13 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string, fie
         `  createdAt: { type: Date, default: Date.now },`,
         `})`,
         ``,
-        `const ${Pascal}Model = (db.client as Connection).model('${Pascal}', ${names.singular}Schema)`,
+        `const ${Pascal}Model = (${cast(lang, 'db.client', 'Connection')}).model('${Pascal}', ${names.singular}Schema)`,
         ``,
         `export async function list${PascalPlural}() {`,
         `  return ${Pascal}Model.find().sort({ createdAt: -1 })`,
         `}`,
         ``,
-        `export async function create${Pascal}(data: ${dataType}) {`,
+        `export async function create${Pascal}(${param(lang, 'data', dataType)}) {`,
         `  return ${Pascal}Model.create(data)`,
         `}`,
       ])
@@ -531,27 +558,23 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string, fie
       const columns = fieldNames.join(', ')
       const namedPlaceholders = fieldNames.map((n) => `:${n}`).join(', ')
       const returning = `id, ${columns}, created_at AS "createdAt"`
+      const genericArg = isTs ? `<${Pascal}>` : ''
       return lines([
-        `import { QueryTypes, type Sequelize } from 'sequelize'`,
+        isTs ? `import { QueryTypes, type Sequelize } from 'sequelize'` : `import { QueryTypes } from 'sequelize'`,
+        typeImportLine,
         `import { db } from '${dbImportPath}'`,
         ``,
-        `export interface ${Pascal} {`,
-        `  id: number`,
-        ...interfaceFields,
-        `  createdAt: string`,
-        `}`,
+        `const client = () => ${cast(lang, 'db.client', 'Sequelize')}`,
         ``,
-        `const client = () => db.client as Sequelize`,
-        ``,
-        `export async function list${PascalPlural}(): Promise<${Pascal}[]> {`,
-        `  return client().query<${Pascal}>(`,
+        `export async function list${PascalPlural}()${ann(lang, `Promise<${Pascal}[]>`)} {`,
+        `  return client().query${genericArg}(`,
         `    'SELECT id, ${columns}, created_at AS "createdAt" FROM ${plural} ORDER BY created_at DESC',`,
         `    { type: QueryTypes.SELECT },`,
         `  )`,
         `}`,
         ``,
-        `export async function create${Pascal}(data: ${dataType}): Promise<${Pascal}> {`,
-        `  const rows = await client().query<${Pascal}>(`,
+        `export async function create${Pascal}(${param(lang, 'data', dataType)})${ann(lang, `Promise<${Pascal}>`)} {`,
+        `  const rows = await client().query${genericArg}(`,
         `    'INSERT INTO ${plural} (${columns}) VALUES (${namedPlaceholders}) RETURNING ${returning}',`,
         `    { replacements: data, type: QueryTypes.SELECT },`,
         `  )`,
@@ -571,7 +594,7 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string, fie
       return lines([
         `import { desc } from 'drizzle-orm'`,
         `import { ${coreImports.join(', ')} } from 'drizzle-orm/pg-core'`,
-        `import type { NodePgDatabase } from 'drizzle-orm/node-postgres'`,
+        isTs && `import type { NodePgDatabase } from 'drizzle-orm/node-postgres'`,
         `import { db } from '${dbImportPath}'`,
         ``,
         `export const ${plural}Table = pgTable('${plural}', {`,
@@ -580,13 +603,13 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string, fie
         `  createdAt: timestamp('created_at').defaultNow(),`,
         `})`,
         ``,
-        `const client = () => db.client as NodePgDatabase`,
+        `const client = () => ${cast(lang, 'db.client', 'NodePgDatabase')}`,
         ``,
         `export async function list${PascalPlural}() {`,
         `  return client().select().from(${plural}Table).orderBy(desc(${plural}Table.createdAt))`,
         `}`,
         ``,
-        `export async function create${Pascal}(data: ${dataType}) {`,
+        `export async function create${Pascal}(${param(lang, 'data', dataType)}) {`,
         `  const [row] = await client().insert(${plural}Table).values(data).returning()`,
         `  return row`,
         `}`,
@@ -594,22 +617,18 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string, fie
     }
     default:
       return lines([
-        `export interface ${Pascal} {`,
-        `  id: string`,
-        ...interfaceFields,
-        `  createdAt: string`,
-        `}`,
+        typeImportLine,
         ``,
         `let seq = 0`,
-        `const store = new Map<string, ${Pascal}>()`,
+        `const store = new Map${isTs ? `<string, ${Pascal}>` : ''}()`,
         ``,
-        `export async function list${PascalPlural}(): Promise<${Pascal}[]> {`,
+        `export async function list${PascalPlural}()${ann(lang, `Promise<${Pascal}[]>`)} {`,
         `  return [...store.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))`,
         `}`,
         ``,
-        `export async function create${Pascal}(data: ${dataType}): Promise<${Pascal}> {`,
+        `export async function create${Pascal}(${param(lang, 'data', dataType)})${ann(lang, `Promise<${Pascal}>`)} {`,
         `  seq += 1`,
-        `  const record: ${Pascal} = { id: String(seq), ...data, createdAt: new Date().toISOString() }`,
+        `  const record${ann(lang, Pascal)} = { id: String(seq), ...data, createdAt: new Date().toISOString() }`,
         `  store.set(record.id, record)`,
         `  return record`,
         `}`,
@@ -617,7 +636,7 @@ function dbModelBody(id: string, names: ResourceNames, dbImportPath: string, fie
   }
 }
 
-function serviceBody(names: ResourceNames, modelImportPath: string, fields: ScaffoldField[]): string {
+function serviceBody(names: ResourceNames, modelImportPath: string, fields: ScaffoldField[], lang: ScaffoldLang): string {
   const { Pascal, PascalPlural } = names
   const dataType = fieldsTypeLiteral(fields)
   return lines([
@@ -627,25 +646,31 @@ function serviceBody(names: ResourceNames, modelImportPath: string, fields: Scaf
     `  return list${PascalPlural}()`,
     `}`,
     ``,
-    `export async function add${Pascal}(data: ${dataType}) {`,
+    `export async function add${Pascal}(${param(lang, 'data', dataType)}) {`,
     `  return create${Pascal}(data)`,
     `}`,
   ])
 }
 
-function controllerBody(names: ResourceNames, serviceImportPath: string, fields: ScaffoldField[]): string {
+function controllerBody(
+  names: ResourceNames,
+  serviceImportPath: string,
+  fields: ScaffoldField[],
+  lang: ScaffoldLang,
+): string {
   const { Pascal, PascalPlural } = names
   const dataType = fieldsTypeLiteral(fields)
+  const isTs = lang === 'ts'
   return lines([
-    `import type { Context } from '@api-kickstart/api-kickstart'`,
+    isTs && `import type { Context } from '@api-kickstart/api-kickstart'`,
     `import { add${Pascal}, getAll${PascalPlural} } from '${serviceImportPath}'`,
     ``,
-    `export async function list${PascalPlural}Handler(_ctx: Context) {`,
+    `export async function list${PascalPlural}Handler(${param(lang, '_ctx', 'Context')}) {`,
     `  return getAll${PascalPlural}()`,
     `}`,
     ``,
-    `export async function create${Pascal}Handler(ctx: Context) {`,
-    `  const body = ctx.body as ${dataType}`,
+    `export async function create${Pascal}Handler(${param(lang, 'ctx', 'Context')}) {`,
+    `  const body = ${isTs ? `ctx.body as ${dataType}` : 'ctx.body'}`,
     `  return add${Pascal}(body)`,
     `}`,
   ])
@@ -688,11 +713,11 @@ function routesBody(
   ])
 }
 
-function requestTimerMiddlewareFile(): string {
+function requestTimerMiddlewareFile(lang: ScaffoldLang): string {
   return lines([
-    `import type { Middleware } from '@api-kickstart/api-kickstart'`,
-    ``,
-    `export const requestTimer: Middleware = async (ctx, next) => {`,
+    lang === 'ts' && `import type { Middleware } from '@api-kickstart/api-kickstart'`,
+    lang === 'ts' && ``,
+    `export const requestTimer${ann(lang, 'Middleware')} = async (ctx, next) => {`,
     `  const start = Date.now()`,
     `  await next()`,
     `  ctx.logger.info({ requestId: ctx.requestId, method: ctx.method, path: ctx.path, ms: Date.now() - start })`,
@@ -773,42 +798,53 @@ function uniqueResources(resources: ScaffoldResource[]): ResolvedResource[] {
 function generateLayered(choice: ScaffoldChoice): ScaffoldFile[] {
   const files: ScaffoldFile[] = []
   const resources = uniqueResources(choice.resources)
+  const lang = choice.language
+  const ext = lang === 'ts' ? 'ts' : 'js'
 
-  files.push({ path: 'src/config/env.ts', contents: envFile() })
+  files.push({ path: `src/config/env.${ext}`, contents: envFile() })
 
   const dbConfig = databaseConfigFile(choice.databaseId)
   if (dbConfig) {
-    files.push({ path: 'src/config/database.ts', contents: dbConfig })
+    files.push({ path: `src/config/database.${ext}`, contents: dbConfig })
   }
 
   const authConfig = authConfigFile(choice.authId)
   if (authConfig) {
-    files.push({ path: 'src/config/auth.ts', contents: authConfig })
+    files.push({ path: `src/config/auth.${ext}`, contents: authConfig })
   }
   if (choice.authorization) {
-    files.push({ path: 'src/config/roles.ts', contents: rolesConfigFile() })
+    files.push({ path: `src/config/roles.${ext}`, contents: rolesConfigFile(lang) })
   }
   if (choice.i18n) {
-    files.push({ path: 'src/config/i18n.ts', contents: i18nConfigFile() })
+    files.push({ path: `src/config/i18n.${ext}`, contents: i18nConfigFile() })
   }
 
-  files.push({ path: 'src/middleware/requestTimer.middleware.ts', contents: requestTimerMiddlewareFile() })
+  files.push({
+    path: `src/middleware/requestTimer.middleware.${ext}`,
+    contents: requestTimerMiddlewareFile(lang),
+  })
 
   for (const { names, fields } of resources) {
+    if (lang === 'ts' && DB_ADAPTERS_WITH_INTERFACE.has(choice.databaseId)) {
+      files.push({
+        path: `src/types/${names.plural}.types.ts`,
+        contents: resourceTypesFile(choice.databaseId, names, fields),
+      })
+    }
     files.push({
-      path: `src/models/${names.plural}.model.ts`,
-      contents: dbModelBody(choice.databaseId, names, '../config/database.js', fields),
+      path: `src/models/${names.plural}.model.${ext}`,
+      contents: dbModelBody(choice.databaseId, names, '../config/database.js', fields, lang, `../types/${names.plural}.types.js`),
     })
     files.push({
-      path: `src/services/${names.plural}.service.ts`,
-      contents: serviceBody(names, `../models/${names.plural}.model.js`, fields),
+      path: `src/services/${names.plural}.service.${ext}`,
+      contents: serviceBody(names, `../models/${names.plural}.model.js`, fields, lang),
     })
     files.push({
-      path: `src/controllers/${names.plural}.controller.ts`,
-      contents: controllerBody(names, `../services/${names.plural}.service.js`, fields),
+      path: `src/controllers/${names.plural}.controller.${ext}`,
+      contents: controllerBody(names, `../services/${names.plural}.service.js`, fields, lang),
     })
     files.push({
-      path: `src/routes/${names.plural}.routes.ts`,
+      path: `src/routes/${names.plural}.routes.${ext}`,
       contents: routesBody(
         names,
         choice.validatorId,
@@ -821,11 +857,11 @@ function generateLayered(choice: ScaffoldChoice): ScaffoldFile[] {
   }
 
   files.push({
-    path: 'src/routes/index.ts',
+    path: `src/routes/index.${ext}`,
     contents: lines(resources.map(({ names }) => `import './${names.plural}.routes.js'`)),
   })
-  files.push({ path: 'src/app.ts', contents: appFile(choice) })
-  files.push({ path: 'src/index.ts', contents: indexFile('./routes/index.js') })
+  files.push({ path: `src/app.${ext}`, contents: appFile(choice) })
+  files.push({ path: `src/index.${ext}`, contents: indexFile('./routes/index.js') })
 
   return files
 }
@@ -833,43 +869,54 @@ function generateLayered(choice: ScaffoldChoice): ScaffoldFile[] {
 function generateModular(choice: ScaffoldChoice): ScaffoldFile[] {
   const files: ScaffoldFile[] = []
   const resources = uniqueResources(choice.resources)
+  const lang = choice.language
+  const ext = lang === 'ts' ? 'ts' : 'js'
 
-  files.push({ path: 'src/config/env.ts', contents: envFile() })
+  files.push({ path: `src/config/env.${ext}`, contents: envFile() })
 
   const dbConfig = databaseConfigFile(choice.databaseId)
   if (dbConfig) {
-    files.push({ path: 'src/config/database.ts', contents: dbConfig })
+    files.push({ path: `src/config/database.${ext}`, contents: dbConfig })
   }
 
   const authConfig = authConfigFile(choice.authId)
   if (authConfig) {
-    files.push({ path: 'src/config/auth.ts', contents: authConfig })
+    files.push({ path: `src/config/auth.${ext}`, contents: authConfig })
   }
   if (choice.authorization) {
-    files.push({ path: 'src/config/roles.ts', contents: rolesConfigFile() })
+    files.push({ path: `src/config/roles.${ext}`, contents: rolesConfigFile(lang) })
   }
   if (choice.i18n) {
-    files.push({ path: 'src/config/i18n.ts', contents: i18nConfigFile() })
+    files.push({ path: `src/config/i18n.${ext}`, contents: i18nConfigFile() })
   }
 
-  files.push({ path: 'src/middleware/requestTimer.middleware.ts', contents: requestTimerMiddlewareFile() })
+  files.push({
+    path: `src/middleware/requestTimer.middleware.${ext}`,
+    contents: requestTimerMiddlewareFile(lang),
+  })
 
   for (const { names, fields } of resources) {
     const moduleDir = `src/modules/${names.plural}`
+    if (lang === 'ts' && DB_ADAPTERS_WITH_INTERFACE.has(choice.databaseId)) {
+      files.push({
+        path: `${moduleDir}/${names.plural}.types.ts`,
+        contents: resourceTypesFile(choice.databaseId, names, fields),
+      })
+    }
     files.push({
-      path: `${moduleDir}/${names.plural}.model.ts`,
-      contents: dbModelBody(choice.databaseId, names, '../../config/database.js', fields),
+      path: `${moduleDir}/${names.plural}.model.${ext}`,
+      contents: dbModelBody(choice.databaseId, names, '../../config/database.js', fields, lang, `./${names.plural}.types.js`),
     })
     files.push({
-      path: `${moduleDir}/${names.plural}.service.ts`,
-      contents: serviceBody(names, `./${names.plural}.model.js`, fields),
+      path: `${moduleDir}/${names.plural}.service.${ext}`,
+      contents: serviceBody(names, `./${names.plural}.model.js`, fields, lang),
     })
     files.push({
-      path: `${moduleDir}/${names.plural}.controller.ts`,
-      contents: controllerBody(names, `./${names.plural}.service.js`, fields),
+      path: `${moduleDir}/${names.plural}.controller.${ext}`,
+      contents: controllerBody(names, `./${names.plural}.service.js`, fields, lang),
     })
     files.push({
-      path: `${moduleDir}/${names.plural}.routes.ts`,
+      path: `${moduleDir}/${names.plural}.routes.${ext}`,
       contents: routesBody(
         names,
         choice.validatorId,
@@ -882,11 +929,11 @@ function generateModular(choice: ScaffoldChoice): ScaffoldFile[] {
   }
 
   files.push({
-    path: 'src/modules/index.ts',
+    path: `src/modules/index.${ext}`,
     contents: lines(resources.map(({ names }) => `import './${names.plural}/${names.plural}.routes.js'`)),
   })
-  files.push({ path: 'src/app.ts', contents: appFile(choice) })
-  files.push({ path: 'src/index.ts', contents: indexFile('./modules/index.js') })
+  files.push({ path: `src/app.${ext}`, contents: appFile(choice) })
+  files.push({ path: `src/index.${ext}`, contents: indexFile('./modules/index.js') })
 
   return files
 }
