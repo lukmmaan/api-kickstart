@@ -66,7 +66,7 @@ export function resourceNames(input: string): ResourceNames {
 }
 
 function lines(parts: Array<string | false | null | undefined>): string {
-  return `${parts.filter((part): part is string => Boolean(part)).join('\n')}\n`
+  return `${parts.filter((part): part is string => part !== false && part != null).join('\n')}\n`
 }
 
 interface FrameworkTemplate {
