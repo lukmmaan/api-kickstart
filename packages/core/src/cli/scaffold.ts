@@ -7,8 +7,8 @@ export interface ScaffoldChoice {
   frameworkId: string
   databaseId: string
   validatorId: string
-  /** Free-text resource name as typed by the user, e.g. "posts". */
-  resource: string
+  /** Free-text resource names as typed by the user, e.g. ["users", "posts"] — one module gets generated per entry. */
+  resources: string[]
 }
 
 export interface ProjectTheme {
@@ -47,6 +47,11 @@ function pascalCase(word: string): string {
     .filter(Boolean)
     .map((part) => part[0].toUpperCase() + part.slice(1))
     .join('')
+}
+
+/** Splits a comma-separated "users, posts, comments" answer into a clean list of resource names. */
+export function parseResourceList(input: string): string[] {
+  return [...new Set(input.split(',').map((part) => part.trim()).filter(Boolean))]
 }
 
 export function resourceNames(input: string): ResourceNames {
@@ -491,6 +496,18 @@ function routesBody(
   ])
 }
 
+function requestTimerMiddlewareFile(): string {
+  return lines([
+    `import type { Middleware } from '@api-kickstart/api-kickstart'`,
+    ``,
+    `export const requestTimer: Middleware = async (ctx, next) => {`,
+    `  const start = Date.now()`,
+    `  await next()`,
+    `  ctx.logger.info({ requestId: ctx.requestId, method: ctx.method, path: ctx.path, ms: Date.now() - start })`,
+    `}`,
+  ])
+}
+
 function appFile(choice: ScaffoldChoice): string {
   const framework = frameworkTemplate(choice.frameworkId)
   const validator = validatorTemplate(choice.validatorId)
@@ -501,11 +518,13 @@ function appFile(choice: ScaffoldChoice): string {
     framework.importLine,
     validator && validator.importLine,
     hasDb && `import { db } from './config/database.js'`,
+    `import { requestTimer } from './middleware/requestTimer.middleware.js'`,
     ``,
     `export const app = createApp({`,
     `  framework: ${framework.factoryExpr},`,
     validator && `  validator: ${validator.factoryExpr},`,
     hasDb && `  db,`,
+    `  middleware: [requestTimer],`,
     `})`,
   ])
 }
@@ -531,9 +550,18 @@ function indexFile(routesBarrelPath: string): string {
   ])
 }
 
+function uniqueResourceNames(resources: string[]): ResourceNames[] {
+  const byPlural = new Map<string, ResourceNames>()
+  for (const resource of resources.length > 0 ? resources : ['users']) {
+    const names = resourceNames(resource)
+    byPlural.set(names.plural, names)
+  }
+  return [...byPlural.values()]
+}
+
 function generateLayered(choice: ScaffoldChoice): ScaffoldFile[] {
-  const names = resourceNames(choice.resource)
   const files: ScaffoldFile[] = []
+  const resources = uniqueResourceNames(choice.resources)
 
   files.push({ path: 'src/config/env.ts', contents: envFile() })
 
@@ -542,23 +570,31 @@ function generateLayered(choice: ScaffoldChoice): ScaffoldFile[] {
     files.push({ path: 'src/config/database.ts', contents: dbConfig })
   }
 
+  files.push({ path: 'src/middleware/requestTimer.middleware.ts', contents: requestTimerMiddlewareFile() })
+
+  for (const names of resources) {
+    files.push({
+      path: `src/models/${names.plural}.model.ts`,
+      contents: dbModelBody(choice.databaseId, names, '../config/database.js'),
+    })
+    files.push({
+      path: `src/services/${names.plural}.service.ts`,
+      contents: serviceBody(names, `../models/${names.plural}.model.js`),
+    })
+    files.push({
+      path: `src/controllers/${names.plural}.controller.ts`,
+      contents: controllerBody(names, `../services/${names.plural}.service.js`),
+    })
+    files.push({
+      path: `src/routes/${names.plural}.routes.ts`,
+      contents: routesBody(names, choice.validatorId, '../app.js', `../controllers/${names.plural}.controller.js`),
+    })
+  }
+
   files.push({
-    path: `src/models/${names.plural}.model.ts`,
-    contents: dbModelBody(choice.databaseId, names, '../config/database.js'),
+    path: 'src/routes/index.ts',
+    contents: lines(resources.map((names) => `import './${names.plural}.routes.js'`)),
   })
-  files.push({
-    path: `src/services/${names.plural}.service.ts`,
-    contents: serviceBody(names, `../models/${names.plural}.model.js`),
-  })
-  files.push({
-    path: `src/controllers/${names.plural}.controller.ts`,
-    contents: controllerBody(names, `../services/${names.plural}.service.js`),
-  })
-  files.push({
-    path: `src/routes/${names.plural}.routes.ts`,
-    contents: routesBody(names, choice.validatorId, '../app.js', `../controllers/${names.plural}.controller.js`),
-  })
-  files.push({ path: 'src/routes/index.ts', contents: lines([`import './${names.plural}.routes.js'`]) })
   files.push({ path: 'src/app.ts', contents: appFile(choice) })
   files.push({ path: 'src/index.ts', contents: indexFile('./routes/index.js') })
 
@@ -566,9 +602,8 @@ function generateLayered(choice: ScaffoldChoice): ScaffoldFile[] {
 }
 
 function generateModular(choice: ScaffoldChoice): ScaffoldFile[] {
-  const names = resourceNames(choice.resource)
-  const moduleDir = `src/modules/${names.plural}`
   const files: ScaffoldFile[] = []
+  const resources = uniqueResourceNames(choice.resources)
 
   files.push({ path: 'src/config/env.ts', contents: envFile() })
 
@@ -577,25 +612,31 @@ function generateModular(choice: ScaffoldChoice): ScaffoldFile[] {
     files.push({ path: 'src/config/database.ts', contents: dbConfig })
   }
 
-  files.push({
-    path: `${moduleDir}/${names.plural}.model.ts`,
-    contents: dbModelBody(choice.databaseId, names, '../../config/database.js'),
-  })
-  files.push({
-    path: `${moduleDir}/${names.plural}.service.ts`,
-    contents: serviceBody(names, `./${names.plural}.model.js`),
-  })
-  files.push({
-    path: `${moduleDir}/${names.plural}.controller.ts`,
-    contents: controllerBody(names, `./${names.plural}.service.js`),
-  })
-  files.push({
-    path: `${moduleDir}/${names.plural}.routes.ts`,
-    contents: routesBody(names, choice.validatorId, '../../app.js', `./${names.plural}.controller.js`),
-  })
+  files.push({ path: 'src/middleware/requestTimer.middleware.ts', contents: requestTimerMiddlewareFile() })
+
+  for (const names of resources) {
+    const moduleDir = `src/modules/${names.plural}`
+    files.push({
+      path: `${moduleDir}/${names.plural}.model.ts`,
+      contents: dbModelBody(choice.databaseId, names, '../../config/database.js'),
+    })
+    files.push({
+      path: `${moduleDir}/${names.plural}.service.ts`,
+      contents: serviceBody(names, `./${names.plural}.model.js`),
+    })
+    files.push({
+      path: `${moduleDir}/${names.plural}.controller.ts`,
+      contents: controllerBody(names, `./${names.plural}.service.js`),
+    })
+    files.push({
+      path: `${moduleDir}/${names.plural}.routes.ts`,
+      contents: routesBody(names, choice.validatorId, '../../app.js', `./${names.plural}.controller.js`),
+    })
+  }
+
   files.push({
     path: 'src/modules/index.ts',
-    contents: lines([`import './${names.plural}/${names.plural}.routes.js'`]),
+    contents: lines(resources.map((names) => `import './${names.plural}/${names.plural}.routes.js'`)),
   })
   files.push({ path: 'src/app.ts', contents: appFile(choice) })
   files.push({ path: 'src/index.ts', contents: indexFile('./modules/index.js') })

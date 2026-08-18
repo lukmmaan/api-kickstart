@@ -54,16 +54,31 @@ describe('runScaffoldWizard', () => {
     vi.restoreAllMocks()
   })
 
-  it('defaults the resource name to "items" when left blank', async () => {
+  it('generates one module per comma-separated resource name', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
     const write = vi.fn().mockReturnValue({ written: [], skipped: [] })
-    const prompter = fakeQuestioner(['2', '']) // modular theme, blank resource name
+    const prompter = fakeQuestioner(['1', 'users, posts, comments'])
 
     await runScaffoldWizard({}, '/some/project', { prompter, isInteractive: true, write })
 
     const [files] = write.mock.calls[0]
     const paths = (files as { path: string }[]).map((f) => f.path)
-    expect(paths).toContain('src/modules/items/items.model.ts')
+    expect(paths).toContain('src/models/users.model.ts')
+    expect(paths).toContain('src/models/posts.model.ts')
+    expect(paths).toContain('src/models/comments.model.ts')
+    vi.restoreAllMocks()
+  })
+
+  it('defaults the resources to "users" when left blank', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const write = vi.fn().mockReturnValue({ written: [], skipped: [] })
+    const prompter = fakeQuestioner(['2', '']) // modular theme, blank resource answer
+
+    await runScaffoldWizard({}, '/some/project', { prompter, isInteractive: true, write })
+
+    const [files] = write.mock.calls[0]
+    const paths = (files as { path: string }[]).map((f) => f.path)
+    expect(paths).toContain('src/modules/users/users.model.ts')
     vi.restoreAllMocks()
   })
 

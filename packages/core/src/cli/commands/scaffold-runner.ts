@@ -1,5 +1,5 @@
 import { createPrompter, promptChoice, promptText, type Questioner } from '../prompt.js'
-import { findTheme, PROJECT_THEMES, type ScaffoldChoice, type ScaffoldFile } from '../scaffold.js'
+import { findTheme, parseResourceList, PROJECT_THEMES, type ScaffoldChoice, type ScaffoldFile } from '../scaffold.js'
 import { writeScaffoldFiles, type WriteResult } from '../write-files.js'
 
 export interface ScaffoldWizardOptions {
@@ -21,18 +21,22 @@ export async function runScaffoldWizard(
 
   const rl = options.prompter ?? createPrompter()
   let themeId: string | null
-  let resource: string
+  let resourcesAnswer: string
 
   try {
     themeId = await promptChoice(
       rl,
       'Project structure',
-      'Scaffold a folder structure now (controllers, routes, services, models, config)?',
+      'Scaffold a folder structure now (controllers, routes, services, models, config, middleware)?',
       PROJECT_THEMES.map((theme) => ({ id: theme.id, label: theme.label })),
     )
     if (!themeId) return 0
 
-    resource = await promptText(rl, 'Name your first resource (plural, e.g. posts, users):', 'items')
+    resourcesAnswer = await promptText(
+      rl,
+      'Name your resources — one module gets generated per name (comma-separated, plural, e.g. users, posts):',
+      'users',
+    )
   } finally {
     rl.close?.()
   }
@@ -40,18 +44,22 @@ export async function runScaffoldWizard(
   const theme = findTheme(themeId)
   if (!theme) return 0
 
+  const resources = parseResourceList(resourcesAnswer)
   const choice: ScaffoldChoice = {
     frameworkId: selections.framework?.[0] ?? 'http',
     databaseId: selections.database?.[0] ?? 'none',
     validatorId: selections.validation?.[0] ?? 'none',
-    resource,
+    resources: resources.length > 0 ? resources : ['users'],
   }
 
   const files = theme.generate(choice)
   const write = options.write ?? writeScaffoldFiles
   const { written, skipped } = write(files, cwd)
 
-  console.log(`\nScaffolded ${written.length} file(s) under src/ using the "${theme.label.split(' (')[0]}" structure.`)
+  const moduleWord = choice.resources.length === 1 ? 'module' : 'modules'
+  console.log(
+    `\nScaffolded ${written.length} file(s) under src/ (${choice.resources.length} ${moduleWord}: ${choice.resources.join(', ')}) using the "${theme.label.split(' (')[0]}" structure.`,
+  )
   if (skipped.length > 0) {
     console.log(`Left ${skipped.length} existing file(s) untouched: ${skipped.join(', ')}`)
   }
