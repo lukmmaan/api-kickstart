@@ -1,6 +1,6 @@
 {
   "name": "@api-kickstart/api-kickstart",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Auth, authorization, validation, CORS, error handling, database, and message broker, wired together with sane defaults, swappable everywhere.",
   "keywords": [
     "api",
