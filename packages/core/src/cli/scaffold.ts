@@ -16,11 +16,16 @@ export interface ScaffoldResource {
   fields: ScaffoldField[]
 }
 
+export type AuthChoice = 'jwt' | 'apiKey' | 'both' | 'none'
+
 export interface ScaffoldChoice {
   frameworkId: string
   databaseId: string
   validatorId: string
   resources: ScaffoldResource[]
+  authId: AuthChoice
+  authorization: boolean
+  i18n: boolean
 }
 
 export interface ProjectTheme {
@@ -294,6 +299,105 @@ function databaseConfigFile(id: string): string | null {
   }
 }
 
+function authConfigFile(authId: AuthChoice): string | null {
+  switch (authId) {
+    case 'jwt':
+      return lines([
+        `import { hashPassword, jwt, verifyPassword } from '@api-kickstart/api-kickstart/auth'`,
+        ``,
+        `// Replace this in-memory list with a real user lookup (database, etc.) — it's here so`,
+        `// the scaffold runs immediately with no setup. Try logging in with admin / admin123.`,
+        `const users = [{ id: '1', username: 'admin', role: 'admin', passwordHash: await hashPassword('admin123') }]`,
+        ``,
+        `export const auth = jwt({`,
+        `  secret: process.env.JWT_SECRET ?? 'dev-secret-change-me',`,
+        `  resolveUser: async (payload) => {`,
+        `    const user = users.find((u) => u.id === String(payload.sub))`,
+        `    return user ? { id: user.id, role: user.role, username: user.username } : null`,
+        `  },`,
+        `  verifyCredentials: async ({ username, password }) => {`,
+        `    const user = users.find((u) => u.username === username)`,
+        `    if (!user) return null`,
+        `    const valid = await verifyPassword(password, user.passwordHash)`,
+        `    return valid ? { id: user.id, role: user.role, username: user.username } : null`,
+        `  },`,
+        `})`,
+      ])
+    case 'apiKey':
+      return lines([
+        `import { apiKey } from '@api-kickstart/api-kickstart/auth'`,
+        ``,
+        `// Replace with a real key store (hashed keys in a database, etc.) — this is here so`,
+        `// the scaffold runs immediately with no setup. Try: x-api-key: dev-api-key-change-me`,
+        `const validApiKeys = new Map([['dev-api-key-change-me', { id: 'service-1', role: 'service' }]])`,
+        ``,
+        `export const auth = apiKey({`,
+        `  resolve: async (key) => validApiKeys.get(key) ?? null,`,
+        `})`,
+      ])
+    case 'both':
+      return lines([
+        `import { apiKey, hashPassword, jwt, verifyPassword } from '@api-kickstart/api-kickstart/auth'`,
+        ``,
+        `// Replace these in-memory lookups with real ones (database, etc.) — they're here so`,
+        `// the scaffold runs immediately with no setup.`,
+        `const users = [{ id: '1', username: 'admin', role: 'admin', passwordHash: await hashPassword('admin123') }]`,
+        `const validApiKeys = new Map([['dev-api-key-change-me', { id: 'service-1', role: 'service' }]])`,
+        ``,
+        `const jwtAuth = jwt({`,
+        `  secret: process.env.JWT_SECRET ?? 'dev-secret-change-me',`,
+        `  resolveUser: async (payload) => {`,
+        `    const user = users.find((u) => u.id === String(payload.sub))`,
+        `    return user ? { id: user.id, role: user.role, username: user.username } : null`,
+        `  },`,
+        `  verifyCredentials: async ({ username, password }) => {`,
+        `    const user = users.find((u) => u.username === username)`,
+        `    if (!user) return null`,
+        `    const valid = await verifyPassword(password, user.passwordHash)`,
+        `    return valid ? { id: user.id, role: user.role, username: user.username } : null`,
+        `  },`,
+        `})`,
+        ``,
+        `const apiKeyAuth = apiKey({`,
+        `  resolve: async (key) => validApiKeys.get(key) ?? null,`,
+        `})`,
+        ``,
+        `export const auth = [jwtAuth, apiKeyAuth]`,
+      ])
+    default:
+      return null
+  }
+}
+
+function rolesConfigFile(): string {
+  return lines([
+    `import type { RoleHierarchy } from '@api-kickstart/api-kickstart'`,
+    ``,
+    `// admin inherits editor's access, editor inherits viewer's — adjust to match your app's roles.`,
+    `export const roleHierarchy: RoleHierarchy = {`,
+    `  admin: ['editor'],`,
+    `  editor: ['viewer'],`,
+    `}`,
+  ])
+}
+
+function i18nConfigFile(): string {
+  return lines([
+    `import { createI18n } from '@api-kickstart/api-kickstart/i18n'`,
+    ``,
+    `export const i18n = createI18n({`,
+    `  locales: ['en', 'id'],`,
+    `  defaultLocale: 'en',`,
+    `  dictionaries: {`,
+    `    en: { welcome: 'Welcome, {name}!' },`,
+    `    id: { welcome: 'Selamat datang, {name}!' },`,
+    `  },`,
+    `})`,
+    ``,
+    `// Usage: i18n.t('welcome', { name: 'World' }) — resolves against the request's detected locale.`,
+  ])
+}
+
 function drizzleColumnExpr(field: ScaffoldField): string {
   switch (field.type) {
     case 'number':
@@ -553,6 +657,7 @@ function routesBody(
   appImportPath: string,
   controllerImportPath: string,
   fields: ScaffoldField[],
+  authorization: boolean,
 ): string {
   const { plural, Pascal, PascalPlural } = names
   const validator = validatorTemplate(validatorId)
@@ -575,7 +680,8 @@ function routesBody(
     `app.route({`,
     `  method: 'POST',`,
     `  path: '/${plural}',`,
-    `  auth: false,`,
+    authorization ? `  auth: true,` : `  auth: false,`,
+    authorization && `  roles: ['admin', 'editor'],`,
     validator && `  body: ${schemaConst},`,
     `  handler: create${Pascal}Handler,`,
     `})`,
@@ -598,6 +704,9 @@ function appFile(choice: ScaffoldChoice): string {
   const framework = frameworkTemplate(choice.frameworkId)
   const validator = validatorTemplate(choice.validatorId)
   const hasDb = choice.databaseId !== 'none' && databaseConfigFile(choice.databaseId) !== null
+  const hasAuth = choice.authId !== 'none'
+  const includesJwt = choice.authId === 'jwt' || choice.authId === 'both'
+  const middlewareList = ['requestTimer', ...(choice.i18n ? ['i18n.middleware'] : [])].join(', ')
 
   return lines([
     `import { createApp } from '@api-kickstart/api-kickstart'`,
@@ -605,13 +714,21 @@ function appFile(choice: ScaffoldChoice): string {
     validator && validator.importLine,
     hasDb && `import { db } from './config/database.js'`,
     `import { requestTimer } from './middleware/requestTimer.middleware.js'`,
+    hasAuth && `import { auth } from './config/auth.js'`,
+    choice.authorization && `import { roleHierarchy } from './config/roles.js'`,
+    choice.i18n && `import { i18n } from './config/i18n.js'`,
     ``,
     `export const app = createApp({`,
     `  framework: ${framework.factoryExpr},`,
     validator && `  validator: ${validator.factoryExpr},`,
     hasDb && `  db,`,
-    `  middleware: [requestTimer],`,
+    hasAuth && `  auth,`,
+    choice.authorization && `  roleHierarchy,`,
+    `  middleware: [${middlewareList}],`,
     `})`,
+    includesJwt && ``,
+    includesJwt &&
+      `app.useAuthRoutes({ login: '/auth/login', refresh: '/auth/refresh', logout: '/auth/logout', me: '/auth/me' })`,
   ])
 }
 
@@ -664,6 +781,17 @@ function generateLayered(choice: ScaffoldChoice): ScaffoldFile[] {
     files.push({ path: 'src/config/database.ts', contents: dbConfig })
   }
 
+  const authConfig = authConfigFile(choice.authId)
+  if (authConfig) {
+    files.push({ path: 'src/config/auth.ts', contents: authConfig })
+  }
+  if (choice.authorization) {
+    files.push({ path: 'src/config/roles.ts', contents: rolesConfigFile() })
+  }
+  if (choice.i18n) {
+    files.push({ path: 'src/config/i18n.ts', contents: i18nConfigFile() })
+  }
+
   files.push({ path: 'src/middleware/requestTimer.middleware.ts', contents: requestTimerMiddlewareFile() })
 
   for (const { names, fields } of resources) {
@@ -687,6 +815,7 @@ function generateLayered(choice: ScaffoldChoice): ScaffoldFile[] {
         '../app.js',
         `../controllers/${names.plural}.controller.js`,
         fields,
+        choice.authorization,
       ),
     })
   }
@@ -712,6 +841,17 @@ function generateModular(choice: ScaffoldChoice): ScaffoldFile[] {
     files.push({ path: 'src/config/database.ts', contents: dbConfig })
   }
 
+  const authConfig = authConfigFile(choice.authId)
+  if (authConfig) {
+    files.push({ path: 'src/config/auth.ts', contents: authConfig })
+  }
+  if (choice.authorization) {
+    files.push({ path: 'src/config/roles.ts', contents: rolesConfigFile() })
+  }
+  if (choice.i18n) {
+    files.push({ path: 'src/config/i18n.ts', contents: i18nConfigFile() })
+  }
+
   files.push({ path: 'src/middleware/requestTimer.middleware.ts', contents: requestTimerMiddlewareFile() })
 
   for (const { names, fields } of resources) {
@@ -730,7 +870,14 @@ function generateModular(choice: ScaffoldChoice): ScaffoldFile[] {
     })
     files.push({
       path: `${moduleDir}/${names.plural}.routes.ts`,
-      contents: routesBody(names, choice.validatorId, '../../app.js', `./${names.plural}.controller.js`, fields),
+      contents: routesBody(
+        names,
+        choice.validatorId,
+        '../../app.js',
+        `./${names.plural}.controller.js`,
+        fields,
+        choice.authorization,
+      ),
     })
   }
 

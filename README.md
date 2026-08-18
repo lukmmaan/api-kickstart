@@ -172,18 +172,45 @@ Fields for users — name:type, comma-separated (types: string, number, boolean)
 Fields for posts — name:type, comma-separated (types: string, number, boolean):
 [name:string]: title:string
 
-Scaffolded 14 file(s) under src/ (2 modules: users, posts) using the "Layered" structure.
+Authentication: Which authentication strategy do you want to scaffold?
+  1) JWT (login/refresh/logout/me routes)
+  2) API key (x-api-key header)
+  3) Both (JWT + API key)
+Enter a number, or press enter to skip: 1
+
+Authorization: Generate a real roles & scope example (role hierarchy, plus roles enforced on the create route of every resource)?
+  1) Yes
+  2) No
+Enter a number, or press enter to skip: 1
+
+Internationalization: Generate an i18n setup too (in-memory dictionary + locale-detection middleware)?
+  1) Yes
+  2) No
+Enter a number, or press enter to skip: 1
+
+Scaffolded 17 file(s) under src/ (2 modules: users, posts) using the "Layered" structure.
 ```
 
-Once the stack is installed, `init` asks whether to scaffold a starting folder structure — `config/`, `models/`, `services/`, `controllers/`, `routes/`, `middleware/` (or the model/service/controller/routes four grouped per-feature under `modules/<resource>/` instead) — wired up for the framework, database, and validator you just picked. Name one resource or several, comma-separated (`users, posts, comments`), then **for each one** say what fields it actually has (`name:string, email:string, age:number, isActive:boolean`) — it's not just folders and filenames that get generated, the file *contents* do too: the TS interface, the SQL/ORM query, the validator schema, and the controller's body cast all use those exact fields, per resource. Leave a fields answer blank and that resource gets a single generic `name: string` field instead. `config/`, `app.ts`, and the example `middleware/requestTimer.middleware.ts` stay shared across every resource. Press enter at the structure question to skip the whole step. Nothing here ever overwrites a file that already exists in `src/`.
+Once the stack is installed, `init` asks whether to scaffold a starting folder structure — `config/`, `models/`, `services/`, `controllers/`, `routes/`, `middleware/` (or the model/service/controller/routes four grouped per-feature under `modules/<resource>/` instead) — wired up for the framework, database, and validator you just picked. Name one resource or several, comma-separated (`users, posts, comments`), then **for each one** say what fields it actually has (`name:string, email:string, age:number, isActive:boolean`) — it's not just folders and filenames that get generated, the file *contents* do too: the TS interface, the SQL/ORM query, the validator schema, and the controller's body cast all use those exact fields, per resource. Leave a fields answer blank and that resource gets a single generic `name: string` field instead.
 
-**What actually lands on disk.** For the transcript above — Express, pg, Zod, Layered, `users` (name/email/age/isActive) + `posts` (title) — you get:
+Three more questions round it out, each independently skippable:
+
+- **Authentication** — JWT, API key, or both. JWT scaffolds `config/auth.ts` with an in-memory user list (so it runs with zero setup — try `admin` / `admin123`) and wires `app.useAuthRoutes()` for real `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/me` routes. API key scaffolds an in-memory key map instead (`x-api-key: dev-api-key-change-me`). Picking both generates both and combines them into a single `auth` array.
+- **Authorization** — generates `config/roles.ts` with a real `RoleHierarchy` (`admin` → `editor` → `viewer`) and adds `auth: true, roles: ['admin', 'editor']` to every resource's `POST` (create) route — the `GET` (list) route stays public.
+- **Internationalization** — generates `config/i18n.ts` with a real two-locale dictionary (`en`/`id`) via `createI18n()`, and wires its locale-detection `middleware` into `app.ts` alongside the request timer.
+
+`config/`, `app.ts`, and `middleware/requestTimer.middleware.ts` stay shared across every resource and every one of these three features. Nothing here ever overwrites a file that already exists in `src/`.
+
+**What actually lands on disk.** For the transcript above — Express, pg, Zod, Layered, `users` (name/email/age/isActive) + `posts` (title), JWT auth, authorization on, i18n on — you get:
 
 ```
 src/
 ├── config/
 │   ├── env.ts
-│   └── database.ts
+│   ├── database.ts
+│   ├── auth.ts
+│   ├── roles.ts
+│   └── i18n.ts
 ├── middleware/
 │   └── requestTimer.middleware.ts
 ├── models/
@@ -255,15 +282,16 @@ app.route({
 app.route({
   method: 'POST',
   path: '/users',
-  auth: false,
+  auth: true,
+  roles: ['admin', 'editor'],
   body: createUserSchema,
   handler: createUserHandler,
 })
 ```
 
-`posts` in the same run only got one field (`title:string`), so its model, schema, and controller only mention `title` — every resource's generated content matches exactly what you told it that resource has.
+`posts` in the same run only got one field (`title:string`), so its model, schema, and controller only mention `title` — every resource's generated content matches exactly what you told it that resource has. The `auth: true, roles: [...]` on the `POST` route came from answering "Yes" to authorization — leave that as `auth: false` with authorization off, same as before.
 
-`src/middleware/requestTimer.middleware.ts` — the one file every scaffold gets regardless of theme or stack, already wired into `app.ts`'s `middleware: [...]`:
+`src/middleware/requestTimer.middleware.ts` — the one file every scaffold gets regardless of theme, stack, or the auth/authorization/i18n answers, already wired into `app.ts`'s `middleware: [...]`:
 
 ```ts
 import type { Middleware } from '@api-kickstart/api-kickstart'
@@ -275,7 +303,82 @@ export const requestTimer: Middleware = async (ctx, next) => {
 }
 ```
 
-`src/app.ts` ties framework, validator, db, and middleware together; `src/index.ts` imports `routes/index.ts` (which re-exports every module's routes as a side effect) and calls `app.listen()`. Pick **Modular by feature** instead and the exact same four files per resource land under `modules/users/` and `modules/posts/` together, with `app.ts`/`config/`/`middleware/` still shared at the top of `src/`.
+`src/config/auth.ts` — this is the JWT version; API key generates an in-memory key map instead, and picking both generates both plus an `auth = [jwtAuth, apiKeyAuth]` array:
+
+```ts
+import { hashPassword, jwt, verifyPassword } from '@api-kickstart/api-kickstart/auth'
+
+// Replace this in-memory list with a real user lookup (database, etc.) — it's here so
+// the scaffold runs immediately with no setup. Try logging in with admin / admin123.
+const users = [{ id: '1', username: 'admin', role: 'admin', passwordHash: await hashPassword('admin123') }]
+
+export const auth = jwt({
+  secret: process.env.JWT_SECRET ?? 'dev-secret-change-me',
+  resolveUser: async (payload) => {
+    const user = users.find((u) => u.id === String(payload.sub))
+    return user ? { id: user.id, role: user.role, username: user.username } : null
+  },
+  verifyCredentials: async ({ username, password }) => {
+    const user = users.find((u) => u.username === username)
+    if (!user) return null
+    const valid = await verifyPassword(password, user.passwordHash)
+    return valid ? { id: user.id, role: user.role, username: user.username } : null
+  },
+})
+```
+
+`src/config/roles.ts` and `src/config/i18n.ts` — generated when you answer yes to authorization / i18n:
+
+```ts
+import type { RoleHierarchy } from '@api-kickstart/api-kickstart'
+
+// admin inherits editor's access, editor inherits viewer's — adjust to match your app's roles.
+export const roleHierarchy: RoleHierarchy = {
+  admin: ['editor'],
+  editor: ['viewer'],
+}
+```
+
+```ts
+import { createI18n } from '@api-kickstart/api-kickstart/i18n'
+
+export const i18n = createI18n({
+  locales: ['en', 'id'],
+  defaultLocale: 'en',
+  dictionaries: {
+    en: { welcome: 'Welcome, {name}!' },
+    id: { welcome: 'Selamat datang, {name}!' },
+  },
+})
+
+// Usage: i18n.t('welcome', { name: 'World' }) — resolves against the request's detected locale.
+```
+
+`src/app.ts` ties everything together — framework, validator, db, auth, role hierarchy, and middleware (request timer plus the i18n locale-detector when it's on) — and calls `useAuthRoutes()` whenever JWT is part of the auth answer:
+
+```ts
+import { createApp } from '@api-kickstart/api-kickstart'
+import { express } from '@api-kickstart/api-kickstart/express'
+import { zod } from '@api-kickstart/api-kickstart/zod'
+import { db } from './config/database.js'
+import { requestTimer } from './middleware/requestTimer.middleware.js'
+import { auth } from './config/auth.js'
+import { roleHierarchy } from './config/roles.js'
+import { i18n } from './config/i18n.js'
+
+export const app = createApp({
+  framework: express(),
+  validator: zod(),
+  db,
+  auth,
+  roleHierarchy,
+  middleware: [requestTimer, i18n.middleware],
+})
+
+app.useAuthRoutes({ login: '/auth/login', refresh: '/auth/refresh', logout: '/auth/logout', me: '/auth/me' })
+```
+
+`src/index.ts` imports `routes/index.ts` (which re-exports every module's routes as a side effect) and calls `app.listen()`. Pick **Modular by feature** instead and the exact same model/service/controller/routes files per resource land under `modules/users/` and `modules/posts/` together, with `app.ts`/`config/`/`middleware/` still shared at the top of `src/`.
 
 Every adapter you didn't pick is still fully implemented and ready — you can always `import` its subpath later, you just need the underlying library installed first. Picked wrong, or need another one mid-project (e.g. you're adding Kafka six months in)? Run it again any time:
 
@@ -2479,7 +2582,7 @@ npx api-kickstart <command> --config ./path/to/config.mjs
 
 | Command | What it does |
 |---|---|
-| `init` | interactively picks a framework/database/broker(s)/validator/storage/logger and installs exactly those packages, then optionally scaffolds `config/`/`models/`/`services/`/`controllers/`/`routes/`/`middleware/` (or `modules/<resource>/`) — one module per resource you name, with the fields you give each one baked into its interface, query, schema, and handler — wired up for what you picked — see [Install](#install) |
+| `init` | interactively picks a framework/database/broker(s)/validator/storage/logger and installs exactly those packages, then optionally scaffolds `config/`/`models/`/`services/`/`controllers/`/`routes/`/`middleware/` (or `modules/<resource>/`) — one module per resource you name, with the fields you give each one baked into its interface, query, schema, and handler, plus optional JWT/API-key auth, a roles & scope authorization example, and an i18n setup — wired up for what you picked — see [Install](#install) |
 | `add [category]` | the same wizard, for adding more later; an optional category (`framework`, `database`, `broker`, `validation`, `storage`, `logging`) skips straight to it |
 | `doctor` | runs the [production checklist](#production-checklist) against your `App`, exits `1` if any check fails |
 | `env:example` | writes a `.env.example` derived from `envSchema` exported by your config file |
