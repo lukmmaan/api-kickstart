@@ -157,7 +157,114 @@ Validation: Which validation library do you want?
 Enter a number, or press enter to skip: 1
 
 Installing with npm: express@^4.19.0 || ^5.0.0, pg@^8.11.0, zod@^3.23.0, zod-to-json-schema@^3.23.5
+
+Project structure: Scaffold a folder structure now (controllers, routes, services, models, config, middleware)?
+  1) Layered (config/, models/, services/, controllers/, routes/ — grouped by type)
+  2) Modular by feature (modules/<resource>/ — model, service, controller, routes together)
+Enter a number, or press enter to skip: 1
+
+Name your resources — one module gets generated per name (comma-separated, plural, e.g. users, posts):
+[users]: users, posts
+
+Scaffolded 14 file(s) under src/ (2 modules: users, posts) using the "Layered" structure.
 ```
+
+Once the stack is installed, `init` asks one more thing: whether to scaffold a starting folder structure — `config/`, `models/`, `services/`, `controllers/`, `routes/`, `middleware/` (or the model/service/controller/routes four grouped per-feature under `modules/<resource>/` instead) — wired up for the framework, database, and validator you just picked. Name one resource or several, comma-separated (`users, posts, comments`) — each one gets its own real CRUD module (list + create, working end to end); `config/`, `app.ts`, and the example `middleware/requestTimer.middleware.ts` stay shared across all of them. Press enter to skip it if you'd rather lay out your own files. It never overwrites anything that already exists in `src/`.
+
+**What actually lands on disk.** For the transcript above — Express, pg, Zod, Layered, `users, posts` — you get:
+
+```
+src/
+├── config/
+│   ├── env.ts
+│   └── database.ts
+├── middleware/
+│   └── requestTimer.middleware.ts
+├── models/
+│   ├── users.model.ts
+│   └── posts.model.ts
+├── services/
+│   ├── users.service.ts
+│   └── posts.service.ts
+├── controllers/
+│   ├── users.controller.ts
+│   └── posts.controller.ts
+├── routes/
+│   ├── users.routes.ts
+│   ├── posts.routes.ts
+│   └── index.ts
+├── app.ts
+└── index.ts
+```
+
+`src/models/users.model.ts` — adapter-correct queries for whichever database you picked (this is the `pg` version; MongoDB, Mongoose, Knex, TypeORM, Sequelize, and Drizzle each get their own idiomatic version, and skipping the database step gets an in-memory `Map` instead):
+
+```ts
+import type { Pool } from 'pg'
+import { db } from '../config/database.js'
+
+export interface User {
+  id: string
+  title: string
+  createdAt: string
+}
+
+const pool = () => db.client as Pool
+
+export async function listUsers(): Promise<User[]> {
+  const { rows } = await pool().query(
+    'SELECT id, title, created_at AS "createdAt" FROM users ORDER BY created_at DESC',
+  )
+  return rows
+}
+
+export async function createUser(title: string): Promise<User> {
+  const { rows } = await pool().query(
+    'INSERT INTO users (title) VALUES ($1) RETURNING id, title, created_at AS "createdAt"',
+    [title],
+  )
+  return rows[0]
+}
+```
+
+`src/routes/users.routes.ts` — the schema comes from whichever validator you picked (Zod here; Joi/Yup/Valibot/TypeBox each get their own real schema, and skipping validation drops the `body:` key entirely):
+
+```ts
+import { z } from 'zod'
+import { app } from '../app.js'
+import { createUserHandler, listUsersHandler } from '../controllers/users.controller.js'
+
+const createUserSchema = z.object({ title: z.string().min(1) })
+
+app.route({
+  method: 'GET',
+  path: '/users',
+  auth: false,
+  handler: listUsersHandler,
+})
+
+app.route({
+  method: 'POST',
+  path: '/users',
+  auth: false,
+  body: createUserSchema,
+  handler: createUserHandler,
+})
+```
+
+`src/middleware/requestTimer.middleware.ts` — the one file every scaffold gets regardless of theme or stack, already wired into `app.ts`'s `middleware: [...]`:
+
+```ts
+import type { Middleware } from '@api-kickstart/api-kickstart'
+
+export const requestTimer: Middleware = async (ctx, next) => {
+  const start = Date.now()
+  await next()
+  ctx.logger.info({ requestId: ctx.requestId, method: ctx.method, path: ctx.path, ms: Date.now() - start })
+}
+```
+
+`src/app.ts` ties framework, validator, db, and middleware together; `src/index.ts` imports `routes/index.ts` (which re-exports every module's routes as a side effect) and calls `app.listen()`. Pick **Modular by feature** instead and the exact same four files per resource land under `modules/users/` and `modules/posts/` together, with `app.ts`/`config/`/`middleware/` still shared at the top of `src/`.
 
 Every adapter you didn't pick is still fully implemented and ready — you can always `import` its subpath later, you just need the underlying library installed first. Picked wrong, or need another one mid-project (e.g. you're adding Kafka six months in)? Run it again any time:
 
@@ -2361,7 +2468,7 @@ npx api-kickstart <command> --config ./path/to/config.mjs
 
 | Command | What it does |
 |---|---|
-| `init` | interactively picks a framework/database/broker(s)/validator/storage/logger and installs exactly those packages — see [Install](#install) |
+| `init` | interactively picks a framework/database/broker(s)/validator/storage/logger and installs exactly those packages, then optionally scaffolds `config/`/`models/`/`services/`/`controllers/`/`routes/`/`middleware/` (or `modules/<resource>/`) — one module per resource you name — wired up for what you picked — see [Install](#install) |
 | `add [category]` | the same wizard, for adding more later; an optional category (`framework`, `database`, `broker`, `validation`, `storage`, `logging`) skips straight to it |
 | `doctor` | runs the [production checklist](#production-checklist) against your `App`, exits `1` if any check fails |
 | `env:example` | writes a `.env.example` derived from `envSchema` exported by your config file |

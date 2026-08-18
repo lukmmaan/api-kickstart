@@ -34,3 +34,37 @@ export async function promptCategory(rl: Questioner, category: StackCategory, lo
     (n) => category.choices[n - 1].id,
   )
 }
+
+export interface SimpleChoice {
+  id: string
+  label: string
+}
+
+/** Single-select prompt over a plain id/label list — for choices that aren't a StackCategory (e.g. a project theme). */
+export async function promptChoice(
+  rl: Questioner,
+  title: string,
+  question: string,
+  choices: SimpleChoice[],
+  log: (line: string) => void = console.log,
+): Promise<string | null> {
+  log(`\n${title}: ${question}`)
+  choices.forEach((choice, i) => log(`  ${i + 1}) ${choice.label}`))
+
+  const answer = (await rl.question('Enter a number, or press enter to skip: ')).trim()
+  if (!answer) return null
+
+  const picks = parseSelection(answer, choices.length, false)
+  return picks.length > 0 ? choices[picks[0] - 1].id : null
+}
+
+export async function promptText(
+  rl: Questioner,
+  question: string,
+  defaultValue: string,
+  log: (line: string) => void = console.log,
+): Promise<string> {
+  log(`\n${question}`)
+  const answer = (await rl.question(`[${defaultValue}]: `)).trim()
+  return answer || defaultValue
+}
