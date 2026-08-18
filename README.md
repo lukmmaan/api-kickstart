@@ -193,22 +193,48 @@ Internationalization: Generate an i18n setup too (in-memory dictionary + locale-
   2) No
 Enter a number, or press enter to skip: 1
 
-Scaffolded 19 file(s) under src/ (2 modules: users, posts) using the "Layered" structure.
+Ops endpoints: Add any of these to app.ts?
+  1) Health check (/health)
+  2) Prometheus metrics (/metrics)
+  3) OpenAPI docs (/openapi.json + /docs)
+Enter numbers separated by commas, or press enter to skip: 1,2,3
+
+Production essentials: Generate graceful shutdown + a scheduled job example (with a distributed lock)?
+  1) Yes
+  2) No
+Enter a number, or press enter to skip: 1
+
+Security middleware: Add any of these to app.ts's middleware?
+  1) Request ID header
+  2) Request logger
+  3) Helmet (security headers)
+  4) Compression
+  5) Rate limiting
+  6) Body size limit
+  7) Request timeout
+  8) Idempotency keys
+  9) CSRF protection
+Enter numbers separated by commas, or press enter to skip: 1,3,5
+
+Scaffolded 20 file(s) under src/ (2 modules: users, posts) using the "Layered" structure.
 ```
 
 Once the stack is installed, `init` asks whether to scaffold a starting folder structure — `config/`, `models/`, `services/`, `controllers/`, `routes/`, `middleware/` (or the model/service/controller/routes four grouped per-feature under `modules/<resource>/` instead) — wired up for the framework, database, and validator you just picked. Then **TypeScript or JavaScript**: pick JavaScript and every file lands as plain `.js`, with every `import type`, interface, and type annotation stripped — not just the extension, the actual file contents change too. Pick TypeScript (the default) and each resource also gets a real `types/` folder — `src/types/users.types.ts`, `src/types/posts.types.ts` — holding the hand-written interface for that resource, imported by its model instead of declared inline (for Modular, the type file sits next to that resource's other files inside `modules/<resource>/` instead of a shared top-level folder, matching the rest of that theme).
 
 Name one resource or several, comma-separated (`users, posts, comments`), then **for each one** say what fields it actually has (`name:string, email:string, age:number, isActive:boolean`) — it's not just folders and filenames that get generated, the file *contents* do too: the interface, the SQL/ORM query, the validator schema, and the controller's body cast all use those exact fields, per resource. Leave a fields answer blank and that resource gets a single generic `name: string` field instead.
 
-Three more questions round it out, each independently skippable:
+Six more questions round it out, each independently skippable:
 
 - **Authentication** — JWT, API key, or both. JWT scaffolds `config/auth.ts` with an in-memory user list (so it runs with zero setup — try `admin` / `admin123`) and wires `app.useAuthRoutes()` for real `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/me` routes. API key scaffolds an in-memory key map instead (`x-api-key: dev-api-key-change-me`). Picking both generates both and combines them into a single `auth` array.
 - **Authorization** — generates `config/roles.ts` with a real `RoleHierarchy` (`admin` → `editor` → `viewer`) and adds `auth: true, roles: ['admin', 'editor']` to every resource's `POST` (create) route — the `GET` (list) route stays public.
 - **Internationalization** — generates `config/i18n.ts` with a real two-locale dictionary (`en`/`id`) via `createI18n()`, and wires its locale-detection `middleware` into `app.ts` alongside the request timer.
+- **Ops endpoints** — any combination of `app.health()`, `app.metrics()`, and a full `app.openapi({...})` call (serving `/openapi.json` and interactive docs at `/docs`), added straight after `createApp(...)` in `app.ts`.
+- **Production essentials** — generates `config/lock.ts` with the distributed lock that matches your database adapter (`pgLock`/`knexLock`/`mongodbLock`, or `memoryLock` as the single-instance fallback), wires `gracefulShutdown(app)` into `index.ts`, and adds a real `app.schedule('example-job', { interval: '5m', lock }, ...)` block to `app.ts` so you have a working scheduled-job example out of the box.
+- **Security middleware** — any combination of `requestId`, `logger`, `helmet`, `compression`, `rateLimit`, `bodyLimit`, `timeout`, `idempotency`, and `csrf` from `@api-kickstart/api-kickstart/middleware`, each with real default options (`rateLimit({ window: '1m', max: 100 })`, `bodyLimit({ maxBytes: 1_000_000 })`, `timeout({ duration: '30s' })`), added to `app.ts`'s `middleware: [...]` array in that canonical order regardless of the order you picked them in.
 
-`config/`, `app.ts`, and `middleware/requestTimer.middleware.ts` stay shared across every resource and every one of these three features. Nothing here ever overwrites a file that already exists in `src/`.
+`config/`, `app.ts`, and `middleware/requestTimer.middleware.ts` stay shared across every resource and every one of these features. Nothing here ever overwrites a file that already exists in `src/`.
 
-**What actually lands on disk.** For the transcript above — Express, pg, Zod, Layered, `users` (name/email/age/isActive) + `posts` (title), JWT auth, authorization on, i18n on — you get:
+**What actually lands on disk.** For the transcript above — Express, pg, Zod, Layered, `users` (name/email/age/isActive) + `posts` (title), JWT auth, authorization on, i18n on, all three ops endpoints, production essentials on, and `requestId`/`helmet`/`rateLimit` security middleware — you get:
 
 ```
 src/
@@ -217,7 +243,8 @@ src/
 │   ├── database.ts
 │   ├── auth.ts
 │   ├── roles.ts
-│   └── i18n.ts
+│   ├── i18n.ts
+│   └── lock.ts
 ├── middleware/
 │   └── requestTimer.middleware.ts
 ├── types/
@@ -392,7 +419,17 @@ export const i18n = createI18n({
 // Usage: i18n.t('welcome', { name: 'World' }) — resolves against the request's detected locale.
 ```
 
-`src/app.ts` ties everything together — framework, validator, db, auth, role hierarchy, and middleware (request timer plus the i18n locale-detector when it's on) — and calls `useAuthRoutes()` whenever JWT is part of the auth answer:
+`src/config/lock.ts` — generated when production essentials is on; picks the distributed lock that matches your database adapter (this is the `pg` version — Knex and MongoDB get `knexLock`/`mongodbLock` the same way, everything else falls back to `memoryLock`, good for local dev or a single instance):
+
+```ts
+import type { Pool } from 'pg'
+import { pgLock } from '@api-kickstart/api-kickstart/pg'
+import { db } from './database.js'
+
+export const lock = pgLock(db.client as Pool)
+```
+
+`src/app.ts` ties everything together — framework, validator, db, auth, role hierarchy, and middleware (request timer, then any security middleware you picked in canonical order, then the i18n locale-detector) — calls `useAuthRoutes()` whenever JWT is part of the auth answer, adds a statement per ops endpoint you picked, and appends the scheduled-job example when production essentials is on:
 
 ```ts
 import { createApp } from '@api-kickstart/api-kickstart'
@@ -400,9 +437,11 @@ import { express } from '@api-kickstart/api-kickstart/express'
 import { zod } from '@api-kickstart/api-kickstart/zod'
 import { db } from './config/database.js'
 import { requestTimer } from './middleware/requestTimer.middleware.js'
+import { requestId, helmet, rateLimit } from '@api-kickstart/api-kickstart/middleware'
 import { auth } from './config/auth.js'
 import { roleHierarchy } from './config/roles.js'
 import { i18n } from './config/i18n.js'
+import { lock } from './config/lock.js'
 
 export const app = createApp({
   framework: express(),
@@ -410,13 +449,40 @@ export const app = createApp({
   db,
   auth,
   roleHierarchy,
-  middleware: [requestTimer, i18n.middleware],
+  middleware: [requestTimer, requestId(), helmet(), rateLimit({ window: '1m', max: 100 }), i18n.middleware],
+})
+
+app.health()
+app.metrics()
+app.openapi({
+  info: { title: 'API', version: '1.0.0' },
+  json: '/openapi.json',
+  serve: '/docs',
 })
 
 app.useAuthRoutes({ login: '/auth/login', refresh: '/auth/refresh', logout: '/auth/logout', me: '/auth/me' })
+
+app.schedule('example-job', { interval: '5m', lock }, async () => {
+  console.log('running example-job')
+})
 ```
 
-`src/index.ts` imports `routes/index.ts` (which re-exports every module's routes as a side effect) and calls `app.listen()`. Pick **Modular by feature** instead and the exact same model/service/controller/routes files per resource land under `modules/users/` and `modules/posts/` together, with `app.ts`/`config/`/`middleware/` still shared at the top of `src/`.
+`src/index.ts` imports `routes/index.ts` (which re-exports every module's routes as a side effect), calls `app.listen()`, and wires `gracefulShutdown(app)` in when production essentials is on:
+
+```ts
+import { env } from './config/env.js'
+import { app } from './app.js'
+import { gracefulShutdown } from '@api-kickstart/api-kickstart'
+import './routes/index.js'
+
+app.listen(env.port, () => {
+  console.log(`Server listening on http://localhost:${env.port}`)
+})
+
+gracefulShutdown(app)
+```
+
+Pick **Modular by feature** instead and the exact same model/service/controller/routes files per resource land under `modules/users/` and `modules/posts/` together, with `app.ts`/`config/`/`middleware/` still shared at the top of `src/`.
 
 Every adapter you didn't pick is still fully implemented and ready — you can always `import` its subpath later, you just need the underlying library installed first. Picked wrong, or need another one mid-project (e.g. you're adding Kafka six months in)? Run it again any time:
 
@@ -2620,7 +2686,7 @@ npx api-kickstart <command> --config ./path/to/config.mjs
 
 | Command | What it does |
 |---|---|
-| `init` | interactively picks a framework/database/broker(s)/validator/storage/logger and installs exactly those packages, then optionally scaffolds `config/`/`types/`/`models/`/`services/`/`controllers/`/`routes/`/`middleware/` (or `modules/<resource>/`) in TypeScript or JavaScript — one module per resource you name, with the fields you give each one baked into its interface, query, schema, and handler, plus optional JWT/API-key auth, a roles & scope authorization example, and an i18n setup — wired up for what you picked — see [Install](#install) |
+| `init` | interactively picks a framework/database/broker(s)/validator/storage/logger and installs exactly those packages, then optionally scaffolds `config/`/`types/`/`models/`/`services/`/`controllers/`/`routes/`/`middleware/` (or `modules/<resource>/`) in TypeScript or JavaScript — one module per resource you name, with the fields you give each one baked into its interface, query, schema, and handler, plus optional JWT/API-key auth, a roles & scope authorization example, an i18n setup, health/metrics/OpenAPI endpoints, production essentials (graceful shutdown + a locked scheduled job), and any of the built-in security middleware — wired up for what you picked — see [Install](#install) |
 | `add [category]` | the same wizard, for adding more later; an optional category (`framework`, `database`, `broker`, `validation`, `storage`, `logging`) skips straight to it |
 | `doctor` | runs the [production checklist](#production-checklist) against your `App`, exits `1` if any check fails |
 | `env:example` | writes a `.env.example` derived from `envSchema` exported by your config file |

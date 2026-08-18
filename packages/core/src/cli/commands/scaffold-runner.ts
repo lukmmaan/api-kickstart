@@ -1,4 +1,4 @@
-import { createPrompter, promptChoice, promptText, type Questioner } from '../prompt.js'
+import { createPrompter, promptChoice, promptMultiChoice, promptText, type Questioner } from '../prompt.js'
 import {
   findTheme,
   parseFields,
@@ -6,10 +6,12 @@ import {
   PROJECT_THEMES,
   resourceNames,
   type AuthChoice,
+  type OpsEndpoint,
   type ScaffoldChoice,
   type ScaffoldFile,
   type ScaffoldLang,
   type ScaffoldResource,
+  type SecurityMiddlewareId,
 } from '../scaffold.js'
 import { writeScaffoldFiles, type WriteResult } from '../write-files.js'
 
@@ -38,6 +40,24 @@ const LANG_CHOICES: { id: ScaffoldLang; label: string }[] = [
   { id: 'js', label: 'JavaScript' },
 ]
 
+const OPS_ENDPOINT_CHOICES: { id: OpsEndpoint; label: string }[] = [
+  { id: 'health', label: 'Health check (/health)' },
+  { id: 'metrics', label: 'Prometheus metrics (/metrics)' },
+  { id: 'openapi', label: 'OpenAPI docs (/openapi.json + /docs)' },
+]
+
+const SECURITY_MIDDLEWARE_CHOICES: { id: SecurityMiddlewareId; label: string }[] = [
+  { id: 'requestId', label: 'Request ID header' },
+  { id: 'logger', label: 'Request logger' },
+  { id: 'helmet', label: 'Helmet (security headers)' },
+  { id: 'compression', label: 'Compression' },
+  { id: 'rateLimit', label: 'Rate limiting' },
+  { id: 'bodyLimit', label: 'Body size limit' },
+  { id: 'timeout', label: 'Request timeout' },
+  { id: 'idempotency', label: 'Idempotency keys' },
+  { id: 'csrf', label: 'CSRF protection' },
+]
+
 export async function runScaffoldWizard(
   selections: Record<string, string[]>,
   cwd: string,
@@ -53,6 +73,9 @@ export async function runScaffoldWizard(
   let authId: AuthChoice = 'none'
   let authorization = false
   let i18n = false
+  let opsEndpoints: OpsEndpoint[] = []
+  let productionEssentials = false
+  let securityMiddleware: SecurityMiddlewareId[] = []
 
   try {
     themeId = await promptChoice(
@@ -63,12 +86,7 @@ export async function runScaffoldWizard(
     )
     if (!themeId) return 0
 
-    const langAnswer = await promptChoice(
-      rl,
-      'Language',
-      'Generate TypeScript or JavaScript?',
-      LANG_CHOICES,
-    )
+    const langAnswer = await promptChoice(rl, 'Language', 'Generate TypeScript or JavaScript?', LANG_CHOICES)
     language = (langAnswer as ScaffoldLang | null) ?? 'ts'
 
     const resourcesAnswer = await promptText(
@@ -111,6 +129,28 @@ export async function runScaffoldWizard(
       YES_NO,
     )
     i18n = i18nAnswer === 'yes'
+
+    opsEndpoints = (await promptMultiChoice(
+      rl,
+      'Ops endpoints',
+      'Add any of these to app.ts?',
+      OPS_ENDPOINT_CHOICES,
+    )) as OpsEndpoint[]
+
+    const productionAnswer = await promptChoice(
+      rl,
+      'Production essentials',
+      'Generate graceful shutdown + a scheduled job example (with a distributed lock)?',
+      YES_NO,
+    )
+    productionEssentials = productionAnswer === 'yes'
+
+    securityMiddleware = (await promptMultiChoice(
+      rl,
+      'Security middleware',
+      "Add any of these to app.ts's middleware?",
+      SECURITY_MIDDLEWARE_CHOICES,
+    )) as SecurityMiddlewareId[]
   } finally {
     rl.close?.()
   }
@@ -127,6 +167,9 @@ export async function runScaffoldWizard(
     authorization,
     i18n,
     language,
+    opsEndpoints,
+    productionEssentials,
+    securityMiddleware,
   }
 
   const files = theme.generate(choice)
